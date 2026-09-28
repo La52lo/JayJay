@@ -1,0 +1,55 @@
+object DeviceDialog: TDeviceDialog
+  Left = 558
+  Height = 200
+  Top = 37
+  Width = 400
+  Caption = 'New Device'
+  ClientHeight = 200
+  ClientWidth = 400
+  DesignTimePPI = 144
+  LCLVersion = '4.6.0.0'
+  object Panel1: TPanel
+    Left = 0
+    Height = 160
+    Top = 0
+    Width = 400
+    Align = alTop
+    BevelOuter = bvNone
+    ClientHeight = 160
+    ClientWidth = 400
+    TabOrder = 0
+    object Label1: TLabel
+      Left = 20
+      Height = 18
+      Top = 20
+      Width = 90
+      Caption = 'Device Name:'
+    end
+    object DeviceNameEdit: TEdit
+      Left = 20
+      Height = 28
+      Top = 50
+      Width = 360
+      TabOrder = 0
+    end
+  end
+  object OKButton: TButton
+    Left = 184
+    Height = 32
+    Top = 162
+    Width = 100
+    Caption = 'OK'
+    ModalResult = 1
+    OnClick = OKButtonClick
+    TabOrder = 1
+  end
+  object CancelButton: TButton
+    Left = 296
+    Height = 32
+    Top = 162
+    Width = 100
+    Caption = 'Cancel'
+    ModalResult = 2
+    TabOrder = 2
+  end
+end
