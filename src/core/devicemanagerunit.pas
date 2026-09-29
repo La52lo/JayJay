@@ -27,11 +27,13 @@ type
   THardwareTask = class
   private
     FName: string;
+
     FTaskType: TNodeType;
     FCreatedAt: TDateTime;
     FExecutedAt: TDateTime;
     FIsRunning: Boolean;
   public
+    FDisplayName: string;
     constructor Create(const AName: string; ATaskType: TNodeType);
     procedure Serialize(AStream: TStream); virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
@@ -50,7 +52,7 @@ type
   public
     property Parameters: TInput read FParameters write FParameters;
     property Result: TOutput read FData write FData;
-    procedure SetResult(const AResult: THardwareResult); override;
+    {procedure SetResult(const AResult: THardwareResult); override;}
     procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
   end;
 
@@ -106,9 +108,9 @@ type
     property CurrentDevice: TDeviceInfo read FCurrentDevice;
     property IsOperationRunning: Boolean read FIsOperationRunning;
   end;
-
+{
 var
-  DeviceManager: TDeviceManager;
+  DeviceManager: TDeviceManager;}
 
 implementation
 
@@ -139,6 +141,7 @@ var
 AnnealParameters : TAnnealConfig;
 begin
   inherited;
+  FDisplayName := 'Single Anneal';
   with FParameters do
     begin
       TargetResistance:= 4500;
@@ -160,6 +163,7 @@ constructor TBatchAnnealTask.Create(const AName: string; ATaskType: TNodeType);
 
 begin
   inherited;
+  FDisplayName := 'Batch Anneal';
   SetLength(FParameters,1);
   {Parameters := AnnealParameters;}
   with FParameters[0] do
@@ -182,6 +186,7 @@ end;
 constructor TProbeTask.Create(const AName: string; ATaskType: TNodeType);
 begin
   inherited;
+  FDisplayName := 'Single Resistance';
   with FParameters do
     begin
       VoltageList        := [0.1,0.05,-0.05,-0.1];
@@ -193,6 +198,7 @@ end;
 constructor TBatchProbeTask.Create(const AName: string; ATaskType: TNodeType);
 begin
   inherited;
+  FDisplayName := 'Batch Resistance';
   with FParameters do
     begin
       VoltageList        := [0.1,0.05,-0.05,-0.1];
@@ -279,10 +285,8 @@ begin
 end;
 
 procedure TDeviceManager.AddTask(Task: THardwareTask; const AName: string; ATaskType: TNodeType);
-var
-  {Task: THardwareTask;}
+
 begin
-  {Task := THardwareTask.Create(AName, ATaskType); }
   FTasks.Add(Task);
 end;
 
@@ -311,9 +315,9 @@ begin
 end;
 
 initialization
-  DeviceManager := TDeviceManager.Create;
+ { DeviceManager := TDeviceManager.Create;}
 
 finalization
-  DeviceManager.Free;
+{  DeviceManager.Free; }
 
 end.

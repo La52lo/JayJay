@@ -75,10 +75,6 @@ type
     FDeviceManager: TDeviceManager;
     FNodeToTaskMap: TNodeToTaskMap;
     Chart        : TChart4D;
-
-
-
-    
     function GetImageIndexForNodeType(ANodeType: TNodeType): Integer;
     function GetDisplayNameForNodeType(ANodeType: TNodeType): string;
     function AddNode(AParent: TTreeNode; const ANodeType: TNodeType;
@@ -179,6 +175,7 @@ begin
   FSetupStatus[1].Label_ := 'Prober';
   FSetupStatus[2].Label_ := 'Heater';
   {FNodeToTaskMap := TNodeToTaskMap.Create;}
+  FDeviceManager := TDeviceManager.Create;
   CreateDefaultDevice;
 end;
 
@@ -186,19 +183,8 @@ procedure TMainWindowForm.CreateDefaultDevice;
 var
   ConfigNode, ResultNode: TTreeNode;
 begin
-  FDeviceManager := DeviceManager.Create;
   FDeviceManager.CreateNewDevice('Default Device');
-  FDeviceNode := DeviceTreeView.Items.Add(nil, 'Default Device');
-  FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
-  FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
-
-  { Add "Add Task" node
-  FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
-  FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
-  FAddTask.Data := Pointer(PtrInt(AddTaskUniqueID));}
-
-  FDeviceNode.Expanded := True;
-  PopulateDeviceInfo;
+  RefreshTreeView;
 end;
 
 procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
@@ -229,11 +215,11 @@ procedure TMainWindowForm.PopulateDeviceInfo;
 var
   InfoText: string;
 begin
-  if DeviceManager.CurrentDevice <> nil then
+  if FDeviceManager.CurrentDevice <> nil then
   begin
     InfoText := Format('Device: %s | Created: %s',
-      [DeviceManager.CurrentDevice.Name,
-       FormatDateTime('yyyy-mm-dd hh:nn:ss', DeviceManager.CurrentDevice.CreatedAt)]);
+      [FDeviceManager.CurrentDevice.Name,
+       FormatDateTime('yyyy-mm-dd hh:nn:ss', FDeviceManager.CurrentDevice.CreatedAt)]);
     EquipmentStatusBar.Panels[0].Text := InfoText;
   end;
 end;
@@ -272,11 +258,12 @@ begin
   DeviceTreeView.FullExpand;
 end;
 
+
 procedure TMainWindowForm.NewDeviceMenuItemClick(Sender: TObject);
 var
   DeviceName: string;
 begin
-  if DeviceManager.IsOperationRunning then
+  if FDeviceManager.IsOperationRunning then
   begin
     ShowMessage('Cannot create device while operation is running.');
     Exit;
@@ -285,7 +272,7 @@ begin
   if DeviceDialog.ShowDeviceDialog(DeviceName) then
   begin
     DeviceTreeView.Items.Clear;
-    DeviceManager.CreateNewDevice(DeviceName);
+    FDeviceManager.CreateNewDevice(DeviceName);
     FDeviceNode := DeviceTreeView.Items.Add(nil, DeviceName);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
@@ -322,7 +309,7 @@ procedure TMainWindowForm.OpenDeviceMenuItemClick(Sender: TObject);
 var
   OpenDialog: TOpenDialog;
 begin
-  if DeviceManager.IsOperationRunning then
+  if FDeviceManager.IsOperationRunning then
   begin
     ShowMessage('Cannot open device while operation is running.');
     Exit;
@@ -333,7 +320,7 @@ begin
     OpenDialog.Filter := 'Device files (*.dvc)|*.dvc';
     if OpenDialog.Execute then
     begin
-      DeviceManager.LoadDevice(OpenDialog.FileName);
+      FDeviceManager.LoadDevice(OpenDialog.FileName);
       RefreshTreeView;
     end;
   finally
@@ -349,7 +336,7 @@ begin
   try
     SaveDialog.Filter := 'Device files (*.dvc)|*.dvc';
     if SaveDialog.Execute then
-      DeviceManager.SaveDevice(SaveDialog.FileName);
+      FDeviceManager.SaveDevice(SaveDialog.FileName);
   finally
     SaveDialog.Free;
   end;
@@ -367,29 +354,25 @@ begin
     case TaskType of
       ntAnneal:
       begin
-        TaskName := 'Single Anneal';
         NewHardwareTask := TAnnealTask.Create('',TaskType)
       end;
       ntBatchAnneal:
       begin
-        TaskName := 'Batch Anneal';
         NewHardwareTask := TBatchAnnealTask.Create('',TaskType)
       end;
       ntProbe:
       begin
-        TaskName := 'Single Resistance';
         NewHardwareTask := TProbeTask.Create('',TaskType)
       end;
       ntBatchProbe:
       begin
-        TaskName := 'Batch Resistance';
         NewHardwareTask := TBatchProbeTask.Create('',TaskType)
       end;
     end;
-
+    TaskName := NewHardwareTask.FDisplayName;
     NewTaskNode := AddNode(FDeviceNode, TaskType, TaskName);
     NewTaskNode.Data := NewHardwareTask;
-    DeviceManager.AddTask(NewHardwareTask,TaskName, TaskType);
+    FDeviceManager.AddTask(NewHardwareTask,TaskName, TaskType);
     FSelectedTaskNode := NewTaskNode;
   end;
 end;
@@ -406,7 +389,7 @@ begin
     Exit;
   end;
 
-  if DeviceManager.IsOperationRunning then
+  if FDeviceManager.IsOperationRunning then
   begin
     ShowMessage('An operation is already running.');
     Exit;
@@ -434,7 +417,7 @@ begin
     Exit;
   end;
 
-  if DeviceManager.IsOperationRunning then
+  if FDeviceManager.IsOperationRunning then
   begin
     ShowMessage('An operation is already running.');
     Exit;
@@ -687,17 +670,29 @@ begin
 end;
 
 procedure TMainWindowForm.RefreshTreeView;
+var
+ I : Integer;
+ NewTaskNode :TTreeNode;
+
 begin
   DeviceTreeView.Items.Clear;
-  if DeviceManager.CurrentDevice <> nil then
+  if FDeviceManager.CurrentDevice <> nil then
   begin
-    FDeviceNode := DeviceTreeView.Items.Add(nil, DeviceManager.CurrentDevice.Name);
+    FDeviceNode := DeviceTreeView.Items.Add(nil, FDeviceManager.CurrentDevice.Name);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
 
-    FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
+    {FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
     FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
-    {FAddTask.Data := Pointer(PtrInt(AddTaskUniqueID));}
+    FAddTask.Data := Pointer(PtrInt(AddTaskUniqueID));}
+    for I := 0 to FDeviceManager.GetTaskCount-1 do
+    begin
+        NewTaskNode := AddNode(FDeviceNode, FDeviceManager.GetTask(I).TaskType,
+                                             FDeviceManager.GetTask(I).FDisplayName);
+        NewTaskNode.Data := FDeviceManager.GetTask(I);
+    end;
+
+
 
     FDeviceNode.Expanded := True;
     PopulateDeviceInfo;
