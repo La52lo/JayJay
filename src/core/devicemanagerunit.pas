@@ -38,7 +38,7 @@ type
     procedure Serialize(AStream: TStream); virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
     procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
-    property Name: string read FName;
+    property Name: string read FName write FName;
     property TaskType: TNodeType read FTaskType;
     property CreatedAt: TDateTime read FCreatedAt;
     property ExecutedAt: TDateTime read FExecutedAt write FExecutedAt;
