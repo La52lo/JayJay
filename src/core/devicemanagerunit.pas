@@ -4,7 +4,7 @@ unit DeviceManagerUnit;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, DateUtils, TaskSelectDialogUnit,AnnealTypes;
+  Classes, SysUtils, Contnrs, DateUtils, TaskSelectDialogUnit,AnnealTypes, fpjson;
 
 type
 
@@ -45,7 +45,7 @@ type
     property IsRunning: Boolean read FIsRunning write FIsRunning;
 
   end;
-   TTypedHardwareTask<TInput, TOutput> = class(THardwareTask)
+    TTypedHardwareTask<TInput, TOutput> = class(THardwareTask)
   private
     FParameters: TInput;
     FData: TOutput;
@@ -77,7 +77,7 @@ type
     procedure SetResult(const AResult: THardwareResult); override;
   end;
 
-   TBatchProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResultArray>)
+    TBatchProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResultArray>)
    public
     constructor Create(const AName: string; ATaskType: TNodeType);
     procedure Serialize(AStream: TStream); override;
@@ -275,13 +275,152 @@ begin
 end;
 
 procedure TDeviceManager.LoadDevice(const AFilePath: string);
+var
+  JsonData: TJSONData;
+  JsonObject: TJSONObject;
+  TasksArray: TJSONArray;
+  i: Integer;
+  TaskObject: TJSONObject;
+  TaskType: TNodeType;
+  TaskName: string;
+  DeviceName: string;
+  CreatedAt, ModifiedAt: TDateTime;
+  FileStream: TFileStream;
 begin
-  { TODO: Implement device loading from file }
- end;
+  try
+    if not FileExists(AFilePath) then
+    begin
+      raise Exception.Create('Device file not found: ' + AFilePath);
+    end;
+
+    FileStream := TFileStream.Create(AFilePath, fmOpenRead);
+    try
+      JsonData := GetJSON(FileStream);
+      try
+        if not (JsonData is TJSONObject) then
+        begin
+          raise Exception.Create('Invalid JSON format in device file');
+        end;
+
+        JsonObject := TJSONObject(JsonData);
+
+        { Load device metadata }
+        DeviceName := JsonObject.Get('DeviceName', 'Unnamed Device');
+        CreatedAt := StrToDateTime(JsonObject.Get('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
+        ModifiedAt := StrToDateTime(JsonObject.Get('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
+
+        { Create new device }
+        if Assigned(FCurrentDevice) then
+          FCurrentDevice.Free;
+        FCurrentDevice := TDeviceInfo.Create(DeviceName);
+        FCurrentDevice.FCreatedAt := CreatedAt;
+        FCurrentDevice.FModifiedAt := ModifiedAt;
+
+        { Clear existing tasks }
+        FTasks.Clear;
+
+        { Load tasks }
+        if JsonObject.IndexOfName('Tasks') >= 0 then
+        begin
+          TasksArray := TJSONArray(JsonObject.Get('Tasks', TJSONArray.Create));
+          for i := 0 to TasksArray.Count - 1 do
+          begin
+            TaskObject := TJSONObject(TasksArray[i]);
+            TaskName := TaskObject.Get('TaskName', 'Task' + IntToStr(i));
+            TaskType := TNodeType(TaskObject.Get('TaskType', Integer(ntDevice)));
+
+            { Reconstruct tasks based on type }
+            case TaskType of
+              ntAnneal:
+                FTasks.Add(TAnnealTask.Create(TaskName, TaskType));
+              ntBatchAnneal:
+                FTasks.Add(TBatchAnnealTask.Create(TaskName, TaskType));
+              ntProbe:
+                FTasks.Add(TProbeTask.Create(TaskName, TaskType));
+              ntBatchProbe:
+                FTasks.Add(TBatchProbeTask.Create(TaskName, TaskType));
+            end;
+          end;
+        end;
+
+        FIsOperationRunning := False;
+
+      finally
+        JsonData.Free;
+      end;
+    finally
+      FileStream.Free;
+    end;
+
+  except
+    on E: Exception do
+    begin
+      raise Exception.Create('Error loading device from file: ' + E.Message);
+    end;
+  end;
+end;
 
 procedure TDeviceManager.SaveDevice(const AFilePath: string);
+var
+  JsonObject: TJSONObject;
+  TasksArray: TJSONArray;
+  i: Integer;
+  TaskObject: TJSONObject;
+  Task: THardwareTask;
+  FileStream: TFileStream;
 begin
-  { TODO: Implement device saving to file }
+  try
+    if not Assigned(FCurrentDevice) then
+    begin
+      raise Exception.Create('No device loaded. Cannot save.');
+    end;
+
+    { Create root JSON object }
+    JsonObject := TJSONObject.Create;
+    try
+      { Save device metadata }
+      JsonObject.Add('DeviceName', FCurrentDevice.FName);
+      JsonObject.Add('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt));
+      JsonObject.Add('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt));
+
+      { Create tasks array }
+      TasksArray := TJSONArray.Create;
+      JsonObject.Add('Tasks', TasksArray);
+
+      { Save each task }
+      for i := 0 to FTasks.Count - 1 do
+      begin
+        Task := THardwareTask(FTasks[i]);
+        TaskObject := TJSONObject.Create;
+
+        TaskObject.Add('TaskName', Task.FName);
+        TaskObject.Add('TaskType', Integer(Task.FTaskType));
+        TaskObject.Add('DisplayName', Task.FDisplayName);
+        TaskObject.Add('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FCreatedAt));
+        TaskObject.Add('ExecutedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FExecutedAt));
+        TaskObject.Add('IsRunning', Task.FIsRunning);
+
+        TasksArray.Add(TaskObject);
+      end;
+
+      { Write to file }
+      FileStream := TFileStream.Create(AFilePath, fmCreate);
+      try
+        JsonObject.Stringify(FileStream);
+      finally
+        FileStream.Free;
+      end;
+
+    finally
+      JsonObject.Free;
+    end;
+
+  except
+    on E: Exception do
+    begin
+      raise Exception.Create('Error saving device to file: ' + E.Message);
+    end;
+  end;
 end;
 
 procedure TDeviceManager.AddTask(Task: THardwareTask; const AName: string; ATaskType: TNodeType);
