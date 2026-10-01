@@ -4,7 +4,7 @@ unit DeviceManagerUnit;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, DateUtils, TaskSelectDialogUnit,AnnealTypes, fpjson;
+  Classes, SysUtils, Contnrs, DateUtils, TaskSelectDialogUnit, AnnealTypes, System.JSON;
 
 type
 
@@ -276,7 +276,6 @@ end;
 
 procedure TDeviceManager.LoadDevice(const AFilePath: string);
 var
-  JsonData: TJSONData;
   JsonObject: TJSONObject;
   TasksArray: TJSONArray;
   i: Integer;
@@ -285,7 +284,8 @@ var
   TaskName: string;
   DeviceName: string;
   CreatedAt, ModifiedAt: TDateTime;
-  FileStream: TFileStream;
+  JsonText: string;
+  StringList: TStringList;
 begin
   try
     if not FileExists(AFilePath) then
@@ -293,41 +293,47 @@ begin
       raise Exception.Create('Device file not found: ' + AFilePath);
     end;
 
-    FileStream := TFileStream.Create(AFilePath, fmOpenRead);
+    StringList := TStringList.Create;
     try
-      JsonData := GetJSON(FileStream);
-      try
-        if not (JsonData is TJSONObject) then
+      StringList.LoadFromFile(AFilePath);
+      JsonText := StringList.Text;
+    finally
+      StringList.Free;
+    end;
+
+    JsonObject := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
+    try
+      if not Assigned(JsonObject) then
+      begin
+        raise Exception.Create('Invalid JSON format in device file');
+      end;
+
+      { Load device metadata }
+      DeviceName := JsonObject.GetValue<string>('DeviceName', 'Unnamed Device');
+      CreatedAt := StrToDateTime(JsonObject.GetValue<string>('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
+      ModifiedAt := StrToDateTime(JsonObject.GetValue<string>('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
+
+      { Create new device }
+      if Assigned(FCurrentDevice) then
+        FCurrentDevice.Free;
+      FCurrentDevice := TDeviceInfo.Create(DeviceName);
+      FCurrentDevice.FCreatedAt := CreatedAt;
+      FCurrentDevice.FModifiedAt := ModifiedAt;
+
+      { Clear existing tasks }
+      FTasks.Clear;
+
+      { Load tasks }
+      if Assigned(JsonObject.GetValue('Tasks')) then
+      begin
+        TasksArray := JsonObject.GetValue('Tasks') as TJSONArray;
+        if Assigned(TasksArray) then
         begin
-          raise Exception.Create('Invalid JSON format in device file');
-        end;
-
-        JsonObject := TJSONObject(JsonData);
-
-        { Load device metadata }
-        DeviceName := JsonObject.Get('DeviceName', 'Unnamed Device');
-        CreatedAt := StrToDateTime(JsonObject.Get('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
-        ModifiedAt := StrToDateTime(JsonObject.Get('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
-
-        { Create new device }
-        if Assigned(FCurrentDevice) then
-          FCurrentDevice.Free;
-        FCurrentDevice := TDeviceInfo.Create(DeviceName);
-        FCurrentDevice.FCreatedAt := CreatedAt;
-        FCurrentDevice.FModifiedAt := ModifiedAt;
-
-        { Clear existing tasks }
-        FTasks.Clear;
-
-        { Load tasks }
-        if JsonObject.IndexOfName('Tasks') >= 0 then
-        begin
-          TasksArray := TJSONArray(JsonObject.Get('Tasks', TJSONArray.Create));
           for i := 0 to TasksArray.Count - 1 do
           begin
-            TaskObject := TJSONObject(TasksArray[i]);
-            TaskName := TaskObject.Get('TaskName', 'Task' + IntToStr(i));
-            TaskType := TNodeType(TaskObject.Get('TaskType', Integer(ntDevice)));
+            TaskObject := TasksArray.Items[i] as TJSONObject;
+            TaskName := TaskObject.GetValue<string>('TaskName', 'Task' + IntToStr(i));
+            TaskType := TNodeType(TaskObject.GetValue<Integer>('TaskType', Integer(ntDevice)));
 
             { Reconstruct tasks based on type }
             case TaskType of
@@ -342,14 +348,12 @@ begin
             end;
           end;
         end;
-
-        FIsOperationRunning := False;
-
-      finally
-        JsonData.Free;
       end;
+
+      FIsOperationRunning := False;
+
     finally
-      FileStream.Free;
+      JsonObject.Free;
     end;
 
   except
@@ -367,7 +371,7 @@ var
   i: Integer;
   TaskObject: TJSONObject;
   Task: THardwareTask;
-  FileStream: TFileStream;
+  StringList: TStringList;
 begin
   try
     if not Assigned(FCurrentDevice) then
@@ -379,13 +383,13 @@ begin
     JsonObject := TJSONObject.Create;
     try
       { Save device metadata }
-      JsonObject.Add('DeviceName', FCurrentDevice.FName);
-      JsonObject.Add('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt));
-      JsonObject.Add('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt));
+      JsonObject.AddPair('DeviceName', TJSONString.Create(FCurrentDevice.FName));
+      JsonObject.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt)));
+      JsonObject.AddPair('ModifiedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt)));
 
       { Create tasks array }
       TasksArray := TJSONArray.Create;
-      JsonObject.Add('Tasks', TasksArray);
+      JsonObject.AddPair('Tasks', TasksArray);
 
       { Save each task }
       for i := 0 to FTasks.Count - 1 do
@@ -393,22 +397,23 @@ begin
         Task := THardwareTask(FTasks[i]);
         TaskObject := TJSONObject.Create;
 
-        TaskObject.Add('TaskName', Task.FName);
-        TaskObject.Add('TaskType', Integer(Task.FTaskType));
-        TaskObject.Add('DisplayName', Task.FDisplayName);
-        TaskObject.Add('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FCreatedAt));
-        TaskObject.Add('ExecutedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FExecutedAt));
-        TaskObject.Add('IsRunning', Task.FIsRunning);
+        TaskObject.AddPair('TaskName', TJSONString.Create(Task.FName));
+        TaskObject.AddPair('TaskType', TJSONNumber.Create(Integer(Task.FTaskType)));
+        TaskObject.AddPair('DisplayName', TJSONString.Create(Task.FDisplayName));
+        TaskObject.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FCreatedAt)));
+        TaskObject.AddPair('ExecutedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FExecutedAt)));
+        TaskObject.AddPair('IsRunning', TJSONBool.Create(Task.FIsRunning));
 
-        TasksArray.Add(TaskObject);
+        TasksArray.AddElement(TaskObject);
       end;
 
       { Write to file }
-      FileStream := TFileStream.Create(AFilePath, fmCreate);
+      StringList := TStringList.Create;
       try
-        JsonObject.Stringify(FileStream);
+        StringList.Text := JsonObject.ToJSON;
+        StringList.SaveToFile(AFilePath);
       finally
-        FileStream.Free;
+        StringList.Free;
       end;
 
     finally
