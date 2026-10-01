@@ -3,7 +3,7 @@ unit AnnealTypes;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, System.JSON;
 type
 
   TInstrumentStatus = record
@@ -74,6 +74,7 @@ type
       procedure   AppendPulseDuration(ADuration: Double);
       procedure   Finalise;
       function    FinalResistance: Double;   { last entry in ResistanceAvg, or -1 }
+      function    ToJSON: TJSONObject;
     end;
   TAnnealedJunction = record
       AnnealResult : TAnnealResult;
@@ -88,6 +89,7 @@ type
       StdResistance   : Double;
       Success         : Boolean;
       ErrorMsg        : string;
+      function ToJSON: TJSONObject;
     end;
 
   TProbedJunction = record
@@ -124,11 +126,15 @@ type
     ProbingResult: TProbingResult;
     AnnealResultArray: TAnnealResultArray;
     ProbingResultArray: TProbingResultArray;
+    function ToJSON: TJSONObject;
   end;
 
   function NowSeconds: Double;
   function MeanDoubleArray(const A: TDoubleArray): Double;
   function StdDoubleArray(const A: TDoubleArray): Double;
+  function DoubleArrayToJSON(const A: TDoubleArray): TJSONArray;
+  function SampleArrayToJSON(const A: TSampleArray): TJSONArray;
+  function ProberCoordToJSON(const ACoord: TProberCoord): TJSONObject;
 
 implementation
 { Current time as seconds since the Unix epoch (used for relative timing). }
@@ -160,6 +166,40 @@ begin
   Result := Sqrt(S / Length(A));
 end;
 
+function DoubleArrayToJSON(const A: TDoubleArray): TJSONArray;
+var
+  i: Integer;
+begin
+  Result := TJSONArray.Create;
+  for i := 0 to High(A) do
+    Result.AddElement(TJSONNumber.Create(A[i]));
+end;
+
+function SampleArrayToJSON(const A: TSampleArray): TJSONArray;
+var
+  i: Integer;
+  SampleObj: TJSONObject;
+begin
+  Result := TJSONArray.Create;
+  for i := 0 to High(A) do
+  begin
+    SampleObj := TJSONObject.Create;
+    SampleObj.AddPair('Time', TJSONNumber.Create(A[i].Time));
+    SampleObj.AddPair('Value', TJSONNumber.Create(A[i].Value));
+    Result.AddElement(SampleObj);
+  end;
+end;
+
+function ProberCoordToJSON(const ACoord: TProberCoord): TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.AddPair('Chip_X', TJSONNumber.Create(ACoord.Chip_X));
+  Result.AddPair('Chip_Y', TJSONNumber.Create(ACoord.Chip_Y));
+  Result.AddPair('Subsite_X', TJSONNumber.Create(ACoord.Subsite_X));
+  Result.AddPair('Subsite_Y', TJSONNumber.Create(ACoord.Subsite_Y));
+  Result.AddPair('Subsite', TJSONString.Create(ACoord.Subsite));
+  Result.AddPair('Break', TJSONBool.Create(ACoord.Break));
+end;
 
 // ---------------------------------------------------------------------------
 // TProberCoord
@@ -236,5 +276,66 @@ begin
   if N = 0 then Result := -1.0
   else           Result := ResistanceAvg[N - 1];
 end;
-end.
 
+function TAnnealResult.ToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.AddPair('ResistanceSamples', SampleArrayToJSON(ResistanceSamples));
+  Result.AddPair('ResistanceAvg', DoubleArrayToJSON(ResistanceAvg));
+  Result.AddPair('ResistanceStd', DoubleArrayToJSON(ResistanceStd));
+  Result.AddPair('VoltageSamples', SampleArrayToJSON(VoltageSamples));
+  Result.AddPair('PulseDurations', DoubleArrayToJSON(PulseDurations));
+  Result.AddPair('TargetResistance', TJSONNumber.Create(TargetResistance));
+  Result.AddPair('PulseDurationMean', TJSONNumber.Create(PulseDurationMean));
+  Result.AddPair('PulseDurationStd', TJSONNumber.Create(PulseDurationStd));
+end;
+
+function TProbingResult.ToJSON: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.AddPair('Readings', DoubleArrayToJSON(Readings));
+  Result.AddPair('MeanResistance', TJSONNumber.Create(MeanResistance));
+  Result.AddPair('StdResistance', TJSONNumber.Create(StdResistance));
+  Result.AddPair('Success', TJSONBool.Create(Success));
+  Result.AddPair('ErrorMsg', TJSONString.Create(ErrorMsg));
+end;
+
+function THardwareResult.ToJSON: TJSONObject;
+var
+  i: Integer;
+  AnnealArray, ProbingArray: TJSONArray;
+  JunctionObj: TJSONObject;
+begin
+  Result := TJSONObject.Create;
+  Result.AddPair('CommandType', TJSONNumber.Create(Integer(CommandType)));
+
+  { Serialize single anneal result }
+  Result.AddPair('AnnealResult', AnnealResult.ToJSON);
+
+  { Serialize single probing result }
+  Result.AddPair('ProbingResult', ProbingResult.ToJSON);
+
+  { Serialize batch anneal results (array of TAnnealedJunction) }
+  AnnealArray := TJSONArray.Create;
+  for i := 0 to High(AnnealResultArray) do
+  begin
+    JunctionObj := TJSONObject.Create;
+    JunctionObj.AddPair('AnnealResult', AnnealResultArray[i].AnnealResult.ToJSON);
+    JunctionObj.AddPair('Coord', ProberCoordToJSON(AnnealResultArray[i].Coord));
+    AnnealArray.AddElement(JunctionObj);
+  end;
+  Result.AddPair('AnnealResultArray', AnnealArray);
+
+  { Serialize batch probing results (array of TProbedJunction) }
+  ProbingArray := TJSONArray.Create;
+  for i := 0 to High(ProbingResultArray) do
+  begin
+    JunctionObj := TJSONObject.Create;
+    JunctionObj.AddPair('ProbingResult', ProbingResultArray[i].ProbingResult.ToJSON);
+    JunctionObj.AddPair('Coord', ProberCoordToJSON(ProbingResultArray[i].Coord));
+    ProbingArray.AddElement(JunctionObj);
+  end;
+  Result.AddPair('ProbingResultArray', ProbingArray);
+end;
+
+end.
