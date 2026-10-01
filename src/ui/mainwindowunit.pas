@@ -502,61 +502,68 @@ begin
   if not Assigned(Node) then
     Exit;
   { Handle different node types }
-  if (Node.Text = 'Config') and (Node.Parent.Text = 'Single Anneal') then
+  if (Node.Level = 1) or (Node.Level = 0)  then
   begin
-    { Open configuration form }
-    AnnealTask :=  TAnnealTask(Node.Parent.Data);
-    AnnealConfigForm.InitializeFromConfig(
-       AnnealTask.Parameters,Node.Parent.Text);
-    if AnnealConfigForm.ShowModal = mrOk then
+    Node.EditText;
+  end;
+  if Node.Level = 2 then
+  begin
+    if (Node.Text = 'Config') and (Node.Parent.Text = 'Single Anneal') then
     begin
-      AnnealConfigForm.RowToParamRecord(1,AnnealParameters,
-                                        ErrorMsg,ErrorCol);
-      if ErrorMsg = '' then
-      Begin
-      ShowMessage('Configuration saved.');
-      AnnealTask.Parameters := AnnealParameters;
-      End Else ShowMessage(ErrorMsg);
-    end;
-  end else
-    if (Node.Text = 'Config') and (Node.Parent.Text = 'Batch Anneal') then
-  begin
-    { Open configuration form }
-    BatchAnnealTask :=  TBatchAnnealTask(Node.Parent.Data);
-    AnnealConfigForm.InitializeFromConfig(
-       BatchAnnealTask.Parameters,Node.Parent.Text);
-    if AnnealConfigForm.ShowModal = mrOk then
+      { Open configuration form }
+      AnnealTask :=  TAnnealTask(Node.Parent.Data);
+      AnnealConfigForm.InitializeFromConfig(
+         AnnealTask.Parameters,Node.Parent.Text);
+      if AnnealConfigForm.ShowModal = mrOk then
+      begin
+        AnnealConfigForm.RowToParamRecord(1,AnnealParameters,
+                                          ErrorMsg,ErrorCol);
+        if ErrorMsg = '' then
+        Begin
+        ShowMessage('Configuration saved.');
+        AnnealTask.Parameters := AnnealParameters;
+        End Else ShowMessage(ErrorMsg);
+      end;
+    end else
+      if (Node.Text = 'Config') and (Node.Parent.Text = 'Batch Anneal') then
     begin
-      AnnealConfigForm.GridToParamArray(AnnealParameterArray,
-                                        ErrorMsg,ErrorRow,ErrorCol);
-      if ErrorMsg = '' then
-      Begin
-      ShowMessage('Configuration saved.');
-      BatchAnnealTask.Parameters := AnnealParameterArray;
-      End Else ShowMessage(ErrorMsg);
-    end;
-  end  else
-  if (Node.Text = 'Config') then
-  begin
-    { Open configuration form }
-    ProbeTask :=  TProbeTask(Node.Parent.Data);
-    ProbeConfigForm.InitializeFromConfig(
-       ProbeTask.Parameters,Node.Parent.Text);
-    if ProbeConfigForm.ShowModal = mrOk then
+      { Open configuration form }
+      BatchAnnealTask :=  TBatchAnnealTask(Node.Parent.Data);
+      AnnealConfigForm.InitializeFromConfig(
+         BatchAnnealTask.Parameters,Node.Parent.Text);
+      if AnnealConfigForm.ShowModal = mrOk then
+      begin
+        AnnealConfigForm.GridToParamArray(AnnealParameterArray,
+                                          ErrorMsg,ErrorRow,ErrorCol);
+        if ErrorMsg = '' then
+        Begin
+        ShowMessage('Configuration saved.');
+        BatchAnnealTask.Parameters := AnnealParameterArray;
+        End Else ShowMessage(ErrorMsg);
+      end;
+    end  else
+    if (Node.Text = 'Config') then
     begin
-      ProbeConfigForm.SaveToConfig(ProbingParameters,
-                                        ErrorMsg);
-      if ErrorMsg = '' then
-      Begin
-      ShowMessage('Configuration saved.');
-      ProbeTask.Parameters := ProbingParameters;
-      End Else ShowMessage(ErrorMsg);
+      { Open configuration form }
+      ProbeTask :=  TProbeTask(Node.Parent.Data);
+      ProbeConfigForm.InitializeFromConfig(
+         ProbeTask.Parameters,Node.Parent.Text);
+      if ProbeConfigForm.ShowModal = mrOk then
+      begin
+        ProbeConfigForm.SaveToConfig(ProbingParameters,
+                                          ErrorMsg);
+        if ErrorMsg = '' then
+        Begin
+        ShowMessage('Configuration saved.');
+        ProbeTask.Parameters := ProbingParameters;
+        End Else ShowMessage(ErrorMsg);
+      end;
+    end
+    else if Node.Text = 'Result' then
+    begin
+      ShowMessage('Displaying result chart for: ' + Node.Parent.Text);
+      { TODO: Display result data }
     end;
-  end
-  else if Node.Text = 'Result' then
-  begin
-    ShowMessage('Displaying result chart for: ' + Node.Parent.Text);
-    { TODO: Display result data }
   end;
 end;
 
@@ -695,10 +702,19 @@ HardwareTask : THardwareTask;
 Node         : TTreeNode;
 
 begin
+  Node := DeviceTreeView.Selected;
+  if  Node.Level = 0 then
+    begin
+      RunSingleButton.Visible := False;
+      RunBatchButton.Visible := False;
+      exit;
+    end;
   if (DeviceTreeView.Selected <> nil) and (DeviceTreeView.Selected.Data <> nil) then
   begin
-    Node := DeviceTreeView.Selected;
+
     HardwareTask :=  THardwareTask(Node.Data);
+
+
     if (HardwareTask.TaskType = ntAnneal) or (HardwareTask.TaskType = ntProbe) then
     begin
       RunSingleButton.Visible := True;
@@ -718,8 +734,10 @@ begin
   AllowEdit := (Node.Data <> nil) and not IsMetadataNode(Node);
   
   { Prevent editing Config/Result nodes }
-  if Node.Text = 'Config' or Node.Text = 'Result' or Node.Text = 'Add Task...' then
-    AllowEdit := False;
+  if (Node.Text = 'Config')
+    or (Node.Text = 'Result')
+    or (Node.Text = 'Add Task...')
+    then AllowEdit := False;
 end;
 
 procedure TMainWindowForm.DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
@@ -744,7 +762,7 @@ begin
     begin
       Device.Name := S;
       Device.ModifiedAt := Now;
-      FDeviceManager.SaveDevice(''); { Optional: auto-save if filepath set }
+      {FDeviceManager.SaveDevice('');  Optional: auto-save if filepath set }
       PopulateDeviceInfo;
     end;
   end
@@ -756,7 +774,7 @@ begin
     begin
       Task.Name := S;
       Task.FDisplayName := S;
-      FDeviceManager.SaveDevice(''); { Optional: auto-save if filepath set }
+      {FDeviceManager.SaveDevice('');  Optional: auto-save if filepath set }
     end;
   end;
 
