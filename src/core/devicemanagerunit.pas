@@ -228,10 +228,96 @@ begin
 end;
 
 { TDeviceManager }
- procedure TAnnealTask.Serialize(AStream: TStream);
- begin
+procedure TAnnealTask.Serialize(AStream: TStream);
+var
+  Root: TJSONObject;
+  Parameters: TJSONObject;
+  JsonText: string;
+  Bytes: TBytes;
+begin
+  if AStream = nil then
+    raise EArgumentNilException.Create('AStream');
 
- end;
+  Root := TJSONObject.Create;
+  try
+    Root.AddPair('TaskName', TJSONString.Create(Name));
+    Root.AddPair('TaskType', TJSONNumber.Create(Integer(TaskType)));
+    Root.AddPair('DisplayName', TJSONString.Create(FDisplayName));
+    Root.AddPair(
+      'CreatedAt',
+      TJSONString.Create(
+        FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', CreatedAt)
+      )
+    );
+    Root.AddPair(
+      'ExecutedAt',
+      TJSONString.Create(
+        FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', ExecutedAt)
+      )
+    );
+    Root.AddPair('IsRunning', TJSONBool.Create(IsRunning));
+
+    Parameters := TJSONObject.Create;
+    Parameters.AddPair(
+      'MeasureVoltage',
+      TJSONNumber.Create(Self.Parameters.MeasureVoltage)
+    );
+    Parameters.AddPair(
+      'MeasureTime',
+      TJSONNumber.Create(Self.Parameters.MeasureTime)
+    );
+    Parameters.AddPair(
+      'PulsePositive',
+      TJSONNumber.Create(Self.Parameters.PulsePositive)
+    );
+    Parameters.AddPair(
+      'PulseNegative',
+      TJSONNumber.Create(Self.Parameters.PulseNegative)
+    );
+    Parameters.AddPair(
+      'PulseLength',
+      TJSONNumber.Create(Self.Parameters.PulseLength)
+    );
+    Parameters.AddPair(
+      'PulsePairs',
+      TJSONNumber.Create(Self.Parameters.PulsePairs)
+    );
+    Parameters.AddPair(
+      'Cycles',
+      TJSONNumber.Create(Self.Parameters.Cycles)
+    );
+    Parameters.AddPair(
+      'TargetResistance',
+      TJSONNumber.Create(Self.Parameters.TargetResistance)
+    );
+    Parameters.AddPair(
+      'Temperature',
+      TJSONNumber.Create(Self.Parameters.Temperature)
+    );
+    Parameters.AddPair(
+      'ThresholdOpen',
+      TJSONNumber.Create(Self.Parameters.ThresholdOpen)
+    );
+    Parameters.AddPair(
+      'ThresholdShort',
+      TJSONNumber.Create(Self.Parameters.ThresholdShort)
+    );
+    Parameters.AddPair(
+      'InitialWait',
+      TJSONNumber.Create(Self.Parameters.InitialWait)
+    );
+
+    Root.AddPair('Parameters', Parameters);
+
+    JsonText := Root.ToJSON;
+    Bytes := TEncoding.UTF8.GetBytes(JsonText);
+
+    if Length(Bytes) > 0 then
+      AStream.WriteBuffer(Bytes[0], Length(Bytes));
+  finally
+    Root.Free;
+  end;
+end;
 
  procedure TBatchAnnealTask.Serialize(AStream: TStream);
  begin
