@@ -62,6 +62,10 @@ type
       var AllowChange: Boolean);
     procedure ToolButton1Click(Sender: TObject);
     procedure LogButtonClick(Sender: TObject);
+    procedure DeviceTreeViewEditing(Sender: TObject; Node: TTreeNode;
+      var AllowEdit: Boolean);
+    procedure DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
+      var S: string);
   private
     FAddTask: TTreeNode;
     FDeviceNode: TTreeNode;
@@ -84,6 +88,8 @@ type
     procedure PopulateDeviceInfo;
     procedure CreateDefaultDevice;
     procedure DispatchTask(TaskPointer:Pointer);
+    procedure AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
+    function IsMetadataNode(ANode: TTreeNode): Boolean;
   protected
      { Override TComponent interface methods to disable reference counting }
     function QueryInterface(const IID: TGuid; out Obj): HResult; stdcall;
@@ -155,6 +161,12 @@ begin
   DeviceTreeView.Items.Clear;
   FCurrentThread := nil;
   FSelectedTaskNode := nil;
+  
+  { Enable inline editing }
+  DeviceTreeView.ReadOnly := False;
+  DeviceTreeView.OnEditing := DeviceTreeViewEditing;
+  DeviceTreeView.OnEdited := DeviceTreeViewEdited;
+  
   Chart := TChart4D.Create(Self);
   Chart.Parent := Self;
   Chart.Align := alClient;
@@ -234,6 +246,28 @@ begin
   Result := NODETYPE_MAP[ANodeType].DisplayName;
 end;
 
+function TMainWindowForm.IsMetadataNode(ANode: TTreeNode): Boolean;
+begin
+  Result := (ANode <> nil) and (ANode.Parent <> nil) and
+    ((ANode.Text = 'Created') or (ANode.Text = 'Modified') or 
+     (ANode.Text = 'Config') or (ANode.Text = 'Result'));
+end;
+
+procedure TMainWindowForm.AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
+var
+  CreatedNode, ModifiedNode: TTreeNode;
+begin
+  if ANode = nil then Exit;
+  
+  CreatedNode := DeviceTreeView.Items.AddChild(ANode, 'Created: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', ACreatedAt));
+  CreatedNode.ImageIndex := 5; { Gray info icon }
+  CreatedNode.SelectedIndex := CreatedNode.ImageIndex;
+  
+  ModifiedNode := DeviceTreeView.Items.AddChild(ANode, 'Modified: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', AModifiedAt));
+  ModifiedNode.ImageIndex := 5; { Gray info icon }
+  ModifiedNode.SelectedIndex := ModifiedNode.ImageIndex;
+end;
+
 function TMainWindowForm.AddNode(AParent: TTreeNode; const ANodeType: TNodeType;
   const AText: string): TTreeNode;
 var
@@ -276,6 +310,10 @@ begin
     FDeviceNode := DeviceTreeView.Items.Add(nil, DeviceName);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
+    FDeviceNode.Data := FDeviceManager.CurrentDevice;
+
+    { Add metadata subnodes }
+    AddMetadataNodes(FDeviceNode, FDeviceManager.CurrentDevice.CreatedAt, FDeviceManager.CurrentDevice.ModifiedAt);
 
     FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
     FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
@@ -372,6 +410,10 @@ begin
     TaskName := NewHardwareTask.FDisplayName;
     NewTaskNode := AddNode(FDeviceNode, TaskType, TaskName);
     NewTaskNode.Data := NewHardwareTask;
+    
+    { Add metadata subnodes to task }
+    AddMetadataNodes(NewTaskNode, NewHardwareTask.CreatedAt, NewHardwareTask.ExecutedAt);
+    
     FDeviceManager.AddTask(NewHardwareTask,TaskName, TaskType);
     FSelectedTaskNode := NewTaskNode;
   end;
@@ -669,6 +711,58 @@ begin
   end;
 end;
 
+procedure TMainWindowForm.DeviceTreeViewEditing(Sender: TObject; Node: TTreeNode;
+  var AllowEdit: Boolean);
+begin
+  { Only allow editing of device and task nodes, not metadata subnodes }
+  AllowEdit := (Node.Data <> nil) and not IsMetadataNode(Node);
+  
+  { Prevent editing Config/Result nodes }
+  if Node.Text = 'Config' or Node.Text = 'Result' or Node.Text = 'Add Task...' then
+    AllowEdit := False;
+end;
+
+procedure TMainWindowForm.DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
+  var S: string);
+var
+  Task: THardwareTask;
+  Device: TDeviceInfo;
+begin
+  { Validate input }
+  if Trim(S) = '' then
+  begin
+    ShowMessage('Name cannot be empty.');
+    S := Node.Text;  { Revert changes }
+    Exit;
+  end;
+
+  { Update device name }
+  if Node = FDeviceNode then
+  begin
+    Device := TDeviceInfo(Node.Data);
+    if Device <> nil then
+    begin
+      Device.Name := S;
+      Device.ModifiedAt := Now;
+      FDeviceManager.SaveDevice(''); { Optional: auto-save if filepath set }
+      PopulateDeviceInfo;
+    end;
+  end
+  else if Node.Parent = FDeviceNode then
+  begin
+    { Update task name }
+    Task := THardwareTask(Node.Data);
+    if Task <> nil then
+    begin
+      Task.Name := S;
+      Task.FDisplayName := S;
+      FDeviceManager.SaveDevice(''); { Optional: auto-save if filepath set }
+    end;
+  end;
+
+  Node.Text := S;
+end;
+
 procedure TMainWindowForm.RefreshTreeView;
 var
  I : Integer;
@@ -681,6 +775,10 @@ begin
     FDeviceNode := DeviceTreeView.Items.Add(nil, FDeviceManager.CurrentDevice.Name);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
+    FDeviceNode.Data := FDeviceManager.CurrentDevice;
+
+    { Add metadata subnodes for device }
+    AddMetadataNodes(FDeviceNode, FDeviceManager.CurrentDevice.CreatedAt, FDeviceManager.CurrentDevice.ModifiedAt);
 
     {FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
     FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
@@ -690,6 +788,9 @@ begin
         NewTaskNode := AddNode(FDeviceNode, FDeviceManager.GetTask(I).TaskType,
                                              FDeviceManager.GetTask(I).FDisplayName);
         NewTaskNode.Data := FDeviceManager.GetTask(I);
+        
+        { Add metadata subnodes for each task }
+        AddMetadataNodes(NewTaskNode, FDeviceManager.GetTask(I).CreatedAt, FDeviceManager.GetTask(I).ExecutedAt);
     end;
 
 
