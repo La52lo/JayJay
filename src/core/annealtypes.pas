@@ -30,6 +30,8 @@ type
     ThresholdOpen      : Double;
     ThresholdShort     : Double;
     InitialWait        : Double;    { s,  default 1.0    }
+    function    ToJSON: TJSONObject;
+    procedure   FromJSON(AJsonObj: TJSONObject);
   end;
 
   TAnnealParameterArray =  TArray<TAnnealConfig>;
@@ -297,6 +299,62 @@ begin
   PulseDurationStd  := 0.0;
 end;
  }
+
+
+function TAnnealConfig.ToJSON: TJSONObject;
+
+begin
+  Result := TJSONObject.Create;
+      Result.AddPair(
+      'MeasureVoltage',
+      TJSONNumber.Create(Self.MeasureVoltage)
+    );
+    Result.AddPair(
+      'MeasureTime',
+      TJSONNumber.Create(Self.MeasureTime)
+    );
+    Result.AddPair(
+      'PulsePositive',
+      TJSONNumber.Create(Self.PulsePositive)
+    );
+    Result.AddPair(
+      'PulseNegative',
+      TJSONNumber.Create(Self.PulseNegative)
+    );
+    Result.AddPair(
+      'PulseLength',
+      TJSONNumber.Create(Self.PulseLength)
+    );
+    Result.AddPair(
+      'PulsePairs',
+      TJSONNumber.Create(Self.PulsePairs)
+    );
+    Result.AddPair(
+      'Cycles',
+      TJSONNumber.Create(Self.Cycles)
+    );
+    Result.AddPair(
+      'TargetResistance',
+      TJSONNumber.Create(Self.TargetResistance)
+    );
+    Result.AddPair(
+      'Temperature',
+      TJSONNumber.Create(Self.Temperature)
+    );
+    Result.AddPair(
+      'ThresholdOpen',
+      TJSONNumber.Create(Self.ThresholdOpen)
+    );
+    Result.AddPair(
+      'ThresholdShort',
+      TJSONNumber.Create(Self.ThresholdShort)
+    );
+    Result.AddPair(
+      'InitialWait',
+      TJSONNumber.Create(Self.InitialWait)
+    );
+end;
+
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);
 var N: Integer;
 begin
@@ -445,13 +503,12 @@ begin
   CommandType := THardwareCommandType(AJsonObj.GetValue('CommandType', 0));
 
   { Deserialize single anneal result }
-  if AJsonObj.IndexOfName('AnnealResult') >= 0 then
+  if AJsonObj.FindValue('AnnealResult') <> nil then
     AnnealResult.FromJSON(TJSONObject(AJsonObj.Get('AnnealResult')));
 
   { Deserialize single probing result }
-  if AJsonObj.IndexOfName('ProbingResult') >= 0 then
+  if AJsonObj.FindValue('ProbingResult') <> nil then
     ProbingResult.FromJSON(TJSONObject(AJsonObj.Get('ProbingResult')));
-
   { Deserialize batch anneal results }
   AnnealArray := TJSONArray(AJsonObj.Get('AnnealResultArray'));
   if AnnealArray <> nil then

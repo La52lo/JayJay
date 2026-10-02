@@ -35,7 +35,7 @@ type
   public
     FDisplayName: string;
     constructor Create(const AName: string; ATaskType: TNodeType);
-    procedure Serialize(AStream: TStream); virtual; abstract;
+    function ToJSON: TJSONValue; virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
     procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
     property Name: string read FName write FName;
@@ -59,28 +59,28 @@ type
   TAnnealTask = class(TTypedHardwareTask<TAnnealConfig,TAnnealResult>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    procedure Serialize(AStream: TStream); override;
+    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
   end;
 
   TProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResult>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    procedure Serialize(AStream: TStream); override;
+    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
   end;
 
   TBatchAnnealTask = class(TTypedHardwareTask<TAnnealParameterArray,TAnnealResultArray>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    procedure Serialize(AStream: TStream); override;
+    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
   end;
 
     TBatchProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResultArray>)
    public
     constructor Create(const AName: string; ATaskType: TNodeType);
-    procedure Serialize(AStream: TStream); override;
+    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
   end;
 
@@ -228,108 +228,56 @@ begin
 end;
 
 { TDeviceManager }
-procedure TAnnealTask.Serialize(AStream: TStream);
+function TAnnealTask.ToJSON: TJSONValue;
 var
-  Root: TJSONObject;
   Parameters: TJSONObject;
-  JsonText: string;
-  Bytes: TBytes;
 begin
-  if AStream = nil then
-    raise EArgumentNilException.Create('AStream');
-
-  Root := TJSONObject.Create;
+    Parameters := TJSONObject.Create;
   try
-    Root.AddPair('TaskName', TJSONString.Create(Name));
-    Root.AddPair('TaskType', TJSONNumber.Create(Integer(TaskType)));
-    Root.AddPair('DisplayName', TJSONString.Create(FDisplayName));
-    Root.AddPair(
+    Parameters.AddPair('TaskName', TJSONString.Create(Name));
+    Parameters.AddPair('TaskType', TJSONNumber.Create(Integer(TaskType)));
+    Parameters.AddPair('DisplayName', TJSONString.Create(FDisplayName));
+    Parameters.AddPair(
       'CreatedAt',
       TJSONString.Create(
         FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', CreatedAt)
       )
     );
-    Root.AddPair(
+    Parameters.AddPair(
       'ExecutedAt',
       TJSONString.Create(
         FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', ExecutedAt)
       )
     );
-    Root.AddPair('IsRunning', TJSONBool.Create(IsRunning));
+    Parameters.AddPair('IsRunning', TJSONBool.Create(IsRunning));
 
-    Parameters := TJSONObject.Create;
-    Parameters.AddPair(
-      'MeasureVoltage',
-      TJSONNumber.Create(Self.Parameters.MeasureVoltage)
-    );
-    Parameters.AddPair(
-      'MeasureTime',
-      TJSONNumber.Create(Self.Parameters.MeasureTime)
-    );
-    Parameters.AddPair(
-      'PulsePositive',
-      TJSONNumber.Create(Self.Parameters.PulsePositive)
-    );
-    Parameters.AddPair(
-      'PulseNegative',
-      TJSONNumber.Create(Self.Parameters.PulseNegative)
-    );
-    Parameters.AddPair(
-      'PulseLength',
-      TJSONNumber.Create(Self.Parameters.PulseLength)
-    );
-    Parameters.AddPair(
-      'PulsePairs',
-      TJSONNumber.Create(Self.Parameters.PulsePairs)
-    );
-    Parameters.AddPair(
-      'Cycles',
-      TJSONNumber.Create(Self.Parameters.Cycles)
-    );
-    Parameters.AddPair(
-      'TargetResistance',
-      TJSONNumber.Create(Self.Parameters.TargetResistance)
-    );
-    Parameters.AddPair(
-      'Temperature',
-      TJSONNumber.Create(Self.Parameters.Temperature)
-    );
-    Parameters.AddPair(
-      'ThresholdOpen',
-      TJSONNumber.Create(Self.Parameters.ThresholdOpen)
-    );
-    Parameters.AddPair(
-      'ThresholdShort',
-      TJSONNumber.Create(Self.Parameters.ThresholdShort)
-    );
-    Parameters.AddPair(
-      'InitialWait',
-      TJSONNumber.Create(Self.Parameters.InitialWait)
-    );
 
-    Root.AddPair('Parameters', Parameters);
+    Parameters.AddPair('Parameters', Self.Parameters.ToJSON);
 
-    JsonText := Root.ToJSON;
-    Bytes := TEncoding.UTF8.GetBytes(JsonText);
-
-    if Length(Bytes) > 0 then
-      AStream.WriteBuffer(Bytes[0], Length(Bytes));
   finally
-    Root.Free;
+    Result := Parameters;
   end;
 end;
 
- procedure TBatchAnnealTask.Serialize(AStream: TStream);
+ function TBatchAnnealTask.ToJSON: TJSONValue;
+ var
+ ParameterArray: TJSONArray;
+ i: Integer;
+ begin
+  ParameterArray := TJSONArray.Create;
+  for i := 0 to length(Parameters) - 1 do
+      begin
+        ParameterArray.AddElement(Parameters[i].ToJSON);
+      end;
+  Result := ParameterArray;
+ end;
+
+ function TProbeTask.ToJSON: TJSONValue;
  begin
 
  end;
 
- procedure TProbeTask.Serialize(AStream: TStream);
- begin
-
- end;
-
- procedure TBatchProbeTask.Serialize(AStream: TStream);
+ function TBatchProbeTask.ToJSON: TJSONValue;
  begin
 
  end;
@@ -452,10 +400,10 @@ end;
 
 procedure TDeviceManager.SaveDevice(const AFilePath: string);
 var
-  JsonObject: TJSONObject;
+  DeviceJSON: TJSONObject;
   TasksArray: TJSONArray;
   i: Integer;
-  TaskObject: TJSONObject;
+  TaskObject: TJSONValue;
   Task: THardwareTask;
   StringList: TStringList;
 begin
@@ -466,16 +414,16 @@ begin
     end;
 
     { Create root JSON object }
-    JsonObject := TJSONObject.Create;
+    DeviceJSON := TJSONObject.Create;
     try
       { Save device metadata }
-      JsonObject.AddPair('DeviceName', TJSONString.Create(FCurrentDevice.FName));
-      JsonObject.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt)));
-      JsonObject.AddPair('ModifiedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt)));
+      DeviceJSON.AddPair('DeviceName', TJSONString.Create(FCurrentDevice.FName));
+      DeviceJSON.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt)));
+      DeviceJSON.AddPair('ModifiedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt)));
 
       { Create tasks array }
       TasksArray := TJSONArray.Create;
-      JsonObject.AddPair('Tasks', TasksArray);
+      DeviceJSON.AddPair('Tasks', TasksArray);
 
       { Save each task }
       for i := 0 to FTasks.Count - 1 do
@@ -483,27 +431,27 @@ begin
         Task := THardwareTask(FTasks[i]);
         TaskObject := TJSONObject.Create;
 
-        TaskObject.AddPair('TaskName', TJSONString.Create(Task.FName));
+        {TaskObject.AddPair('TaskName', TJSONString.Create(Task.FName));
         TaskObject.AddPair('TaskType', TJSONNumber.Create(Integer(Task.FTaskType)));
         TaskObject.AddPair('DisplayName', TJSONString.Create(Task.FDisplayName));
         TaskObject.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FCreatedAt)));
         TaskObject.AddPair('ExecutedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FExecutedAt)));
-        TaskObject.AddPair('IsRunning', TJSONBool.Create(Task.FIsRunning));
-
+        TaskObject.AddPair('IsRunning', TJSONBool.Create(Task.FIsRunning));}
+        TaskObject := Task.ToJSON;
         TasksArray.AddElement(TaskObject);
       end;
 
       { Write to file }
       StringList := TStringList.Create;
       try
-        StringList.Text := JsonObject.ToJSON;
+        StringList.Text := DeviceJSON.ToJSON;
         StringList.SaveToFile(AFilePath);
       finally
         StringList.Free;
       end;
 
     finally
-      JsonObject.Free;
+      DeviceJSON.Free;
     end;
 
   except
