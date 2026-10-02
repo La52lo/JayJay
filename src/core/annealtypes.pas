@@ -106,7 +106,6 @@ type
                 ntProbe,ntBatchProbe, ntAnnealConfig,
                ntAnnealResult, ntProbeConfig, ntProbeResult);
 
-  type
   THardwareCommandType = (
     hcInitialize,
     hcAnneal,
@@ -353,6 +352,11 @@ begin
       'InitialWait',
       TJSONNumber.Create(Self.InitialWait)
     );
+end;
+
+procedure TAnnealConfig.FromJSON(AJsonObj: TJSONObject);
+begin
+
 end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);
