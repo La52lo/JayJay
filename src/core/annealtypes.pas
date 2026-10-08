@@ -69,6 +69,8 @@ type
       TargetResistance   : Double;         { 0.0 means no target set   }
       PulseDurationMean  : Double;
       PulseDurationStd   : Double;
+      FinalCycleCount    : Integer;
+      FinalPairCount     : Integer;
 
       procedure   AddResistanceSample(ATime, AValue: Double);
       procedure   AddVoltageSample(ATime, AValue: Double);
@@ -82,6 +84,8 @@ type
   TAnnealedJunction = record
       AnnealResult : TAnnealResult;
       Coord        : TProberCoord;
+
+      function ToJSON: TJSONObject;
   end;
 
   TAnnealResultArray = array of TAnnealedJunction;
@@ -104,13 +108,16 @@ type
 
   TNodeType = (ntDevice, ntAddTask, ntAnneal, ntBatchAnneal,
                 ntProbe,ntBatchProbe, ntAnnealConfig,
-               ntAnnealResult, ntProbeConfig, ntProbeResult);
+               ntAnnealResult, ntProbeConfig, ntProbeResult,ntAnnealedJunction,
+               ntProbedJunction);
 
   THardwareCommandType = (
     hcInitialize,
-    hcAnneal,
-    hcProbe,
+    hcAnnealSingle,
+    hcProbeSingle,
+    hcAnnealBatchCycle,
     hcAnnealBatch,
+    hcProbeBatchCycle,
     hcProbeBatch,
     hcShutdown
   );
@@ -126,7 +133,9 @@ type
   THardwareResult = record
     CommandType: THardwareCommandType;
     AnnealResult: TAnnealResult;
+    AnnealedJunctionResult: TAnnealedJunction;
     ProbingResult: TProbingResult;
+    ProbedJunctionResult: TProbedJunction;
     AnnealResultArray: TAnnealResultArray;
     ProbingResultArray: TProbingResultArray;
     function ToJSON: TJSONObject;
@@ -420,6 +429,16 @@ begin
   Result.AddPair('TargetResistance', TJSONNumber.Create(TargetResistance));
   Result.AddPair('PulseDurationMean', TJSONNumber.Create(PulseDurationMean));
   Result.AddPair('PulseDurationStd', TJSONNumber.Create(PulseDurationStd));
+end;
+
+function TAnnealedJunction.ToJSON: TJSONObject;
+var
+ JunctionObj : TJSONObject;
+begin
+  JunctionObj := TJSONObject.Create;
+  JunctionObj.AddPair('AnnealResult', AnnealResult.ToJSON);
+  JunctionObj.AddPair('Coord', ProberCoordToJSON(Coord));
+  Result := JunctionObj;
 end;
 
 procedure TAnnealResult.FromJSON(AJsonObj: TJSONObject);

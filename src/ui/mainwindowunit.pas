@@ -6,7 +6,7 @@ uses
   Classes, SysUtils, Vcl.Forms, Controls, Graphics, Dialogs, Menus, ComCtrls,
   ExtCtrls ,Contnrs, Winapi.Windows, ProbeConfig, DeviceDialogUnit,
   TaskSelectDialogUnit, AnnealConfig, ResultViewer,logview, threadinghelper,
-  MeasurementObserver,AnnealManager,AnnealTypes,
+  MeasurementObserver,AnnealManager,AnnealTypes,nodejunctionmapper,
   System.ImageList, Vcl.ImgList, Vcl.ToolWin, Mitov.VCLTypes,
   VCL.LPControl, SLControlCollection, LPControlDrawLayers, SLBasicDataDisplay,
   SLDataDisplay, SLDataChart, SLScope, System.Types,System.Generics.Collections,
@@ -17,6 +17,10 @@ type
   { TMainWindowForm }
 
   TNodeToTaskMap = TDictionary<TTreeNode,THardwareTask>;
+  TNodeSpecifier = class
+  public
+    FNodeType: TNodeType;
+  end;
   TMainWindowForm = class(TForm,IMeasurementObserver)
     IconList: TImageList;
     MainMenu: TMainMenu;
@@ -73,11 +77,12 @@ type
     FCurrentThread: THardwareThread;
     FCurrentTaskType: TTaskType;
     FSelectedTaskNode: TTreeNode;
-    FActiveNode: TTreeNode;
+    {FActiveNode: TTreeNode;}
     FActiveTask: THardwareTask;
     IsTaskRunning: Boolean;
     FDeviceManager: TDeviceManager;
-    FNodeToTaskMap: TNodeToTaskMap;
+    FNodeToJunctionMap: TTreeArrayMapper;
+    FJunctionNodeList: TObjectList<TJunctionNodeData>;
     Chart        : TChart4D;
     function GetImageIndexForNodeType(ANodeType: TNodeType): Integer;
     function GetDisplayNameForNodeType(ANodeType: TNodeType): string;
@@ -89,6 +94,7 @@ type
     procedure CreateDefaultDevice;
     procedure DispatchTask(TaskPointer:Pointer);
     procedure AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
+    function AddJunctionNode(ANode: TTreeNode;JunctionEntry:TJunctionEntry):TTreeNode;
     function IsMetadataNode(ANode: TTreeNode): Boolean;
   protected
      { Override TComponent interface methods to disable reference counting }
@@ -143,7 +149,9 @@ const
     (NodeType: ntAnnealConfig; ImageIndex: 3; DisplayName: 'Config'),
     (NodeType: ntAnnealResult; ImageIndex: 4; DisplayName: 'Result'),
     (NodeType: ntProbeConfig; ImageIndex: 3; DisplayName: 'Config'),
-    (NodeType: ntProbeResult; ImageIndex: 4; DisplayName: 'Result')
+    (NodeType: ntProbeResult; ImageIndex: 4; DisplayName: 'Result'),
+    (NodeType: ntAnnealedJunction; ImageIndex: 6; DisplayName: 'Junction'),
+    (NodeType: ntProbedJunction; ImageIndex: 7; DisplayName: 'Junction')
   );
 
 var
@@ -158,9 +166,12 @@ implementation
 
 procedure TMainWindowForm.FormCreate(Sender: TObject);
 begin
+
+  FJunctionNodeList := TObjectList<TJunctionNodeData>.Create(True);
   DeviceTreeView.Items.Clear;
   FCurrentThread := nil;
   FSelectedTaskNode := nil;
+  {FNodeToJunctionMap:= TTreeArrayMapper.Create; }
   
   { Enable inline editing }
   DeviceTreeView.ReadOnly := False;
@@ -179,6 +190,7 @@ begin
   Chart.Plot.Source := 'Source: World Bank';
   {Chart.Plot.Categories := ['Sweden', 'Spain', 'Belgium', 'Netherlands'];}
   Chart.Plot.AddSeries('2020', [94.5, 93.2, 91.5, 91.3]);
+  {Chart.Plot.AddLineSeries();}
 
   Chart.SaveToPng('online.png');
 
@@ -206,19 +218,19 @@ begin
    case (THardwareTask(TaskPointer)).TaskType of
        ntProbe:
          begin
-         FCurrentThread.Probe((TProbeTask(TaskPointer)).Parameters);
+         FCurrentThread.Probe((TProbeTask(TaskPointer)).Config);
          end;
        ntAnneal:
          begin
-         FCurrentThread.Anneal((TAnnealTask(TaskPointer)).Parameters);
+         FCurrentThread.Anneal((TAnnealTask(TaskPointer)).Config);
          end;
        ntBatchAnneal:
          begin
-         FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Parameters);
+         FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Config);
          end;
        ntBatchProbe:
          begin
-         FCurrentThread.ProbeBatch((TBatchProbeTask(TaskPointer)).Parameters);
+         FCurrentThread.ProbeBatch((TBatchProbeTask(TaskPointer)).Config);
          end;
    end;
 end;
@@ -258,14 +270,29 @@ var
   CreatedNode, ModifiedNode: TTreeNode;
 begin
   if ANode = nil then Exit;
-  
+
   CreatedNode := DeviceTreeView.Items.AddChild(ANode, 'Created: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', ACreatedAt));
   CreatedNode.ImageIndex := 5; { Gray info icon }
   CreatedNode.SelectedIndex := CreatedNode.ImageIndex;
-  
+
   ModifiedNode := DeviceTreeView.Items.AddChild(ANode, 'Modified: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', AModifiedAt));
   ModifiedNode.ImageIndex := 5; { Gray info icon }
   ModifiedNode.SelectedIndex := ModifiedNode.ImageIndex;
+end;
+
+function TMainWindowForm.AddJunctionNode(ANode: TTreeNode;
+                        JunctionEntry:TJunctionEntry):TTreeNode;
+var
+  CreatedNode: TTreeNode;
+begin
+  if ANode = nil then Exit;
+
+  CreatedNode := DeviceTreeView.Items.AddChild(ANode, JunctionEntry.Name);
+  CreatedNode.ImageIndex := GetImageIndexForNodeType(JunctionEntry.NodeType);
+  CreatedNode.SelectedIndex := CreatedNode.ImageIndex;
+  FJunctionNodeList.Add(TJunctionNodeData.Create(JunctionEntry));
+  CreatedNode.Data := FJunctionNodeList.Last;
+  result := CreatedNode;
 end;
 
 function TMainWindowForm.AddNode(AParent: TTreeNode; const ANodeType: TNodeType;
@@ -441,8 +468,8 @@ begin
   if (SelectedNode.Parent <> nil) and (SelectedNode.Parent = FDeviceNode) then
   begin
     ShowMessage('Running task: ' + SelectedNode.Text);
-    FActiveTask := SelectedNode.Data;
-    DispatchTask(FactiveTask);
+    FActiveTask := THardwareTask(SelectedNode.Data);
+    DispatchTask(SelectedNode.Data);
     { TODO: Implement actual task execution }
     {FCurrentThread.}
   end;
@@ -468,8 +495,8 @@ begin
   if (SelectedNode.Parent <> nil) and (SelectedNode.Parent = FDeviceNode) then
   begin
     ShowMessage('Running task: ' + SelectedNode.Text);
-    FActiveTask := SelectedNode.Data;
-    DispatchTask(FactiveTask);
+    FActiveTask := THardwareTask(SelectedNode.Data);
+    DispatchTask(SelectedNode.Data);
     { TODO: Implement actual task execution }
     {FCurrentThread.}
   end;
@@ -513,7 +540,7 @@ begin
       { Open configuration form }
       AnnealTask :=  TAnnealTask(Node.Parent.Data);
       AnnealConfigForm.InitializeFromConfig(
-         AnnealTask.Parameters,Node.Parent.Text);
+         AnnealTask.Config,Node.Parent.Text);
       if AnnealConfigForm.ShowModal = mrOk then
       begin
         AnnealConfigForm.RowToParamRecord(1,AnnealParameters,
@@ -521,7 +548,7 @@ begin
         if ErrorMsg = '' then
         Begin
         ShowMessage('Configuration saved.');
-        AnnealTask.Parameters := AnnealParameters;
+        AnnealTask.Config := AnnealParameters;
         End Else ShowMessage(ErrorMsg);
       end;
     end else
@@ -530,7 +557,7 @@ begin
       { Open configuration form }
       BatchAnnealTask :=  TBatchAnnealTask(Node.Parent.Data);
       AnnealConfigForm.InitializeFromConfig(
-         BatchAnnealTask.Parameters,Node.Parent.Text);
+         BatchAnnealTask.Config,Node.Parent.Text);
       if AnnealConfigForm.ShowModal = mrOk then
       begin
         AnnealConfigForm.GridToParamArray(AnnealParameterArray,
@@ -538,7 +565,7 @@ begin
         if ErrorMsg = '' then
         Begin
         ShowMessage('Configuration saved.');
-        BatchAnnealTask.Parameters := AnnealParameterArray;
+        BatchAnnealTask.Config := AnnealParameterArray;
         End Else ShowMessage(ErrorMsg);
       end;
     end  else
@@ -547,7 +574,7 @@ begin
       { Open configuration form }
       ProbeTask :=  TProbeTask(Node.Parent.Data);
       ProbeConfigForm.InitializeFromConfig(
-         ProbeTask.Parameters,Node.Parent.Text);
+         ProbeTask.Config,Node.Parent.Text);
       if ProbeConfigForm.ShowModal = mrOk then
       begin
         ProbeConfigForm.SaveToConfig(ProbingParameters,
@@ -555,7 +582,7 @@ begin
         if ErrorMsg = '' then
         Begin
         ShowMessage('Configuration saved.');
-        ProbeTask.Parameters := ProbingParameters;
+        ProbeTask.Config := ProbingParameters;
         End Else ShowMessage(ErrorMsg);
       end;
     end
@@ -606,6 +633,8 @@ begin
     FCurrentThread.Terminate;
     FCurrentThread.WaitFor;
     FCurrentThread.Free;
+    FJunctionNodeList.Free;
+    FDeviceManager.Free;
   end;
 
 end;
@@ -783,8 +812,10 @@ end;
 
 procedure TMainWindowForm.RefreshTreeView;
 var
- I : Integer;
- NewTaskNode :TTreeNode;
+ I,J : Integer;
+ NewTaskNode,JunctionNode :TTreeNode;
+ JunctionListing : TJunctionListing;
+ JunctionNodeData : TJunctionNodeData;
 
 begin
   DeviceTreeView.Items.Clear;
@@ -797,22 +828,20 @@ begin
 
     { Add metadata subnodes for device }
     AddMetadataNodes(FDeviceNode, FDeviceManager.CurrentDevice.CreatedAt, FDeviceManager.CurrentDevice.ModifiedAt);
-
-    {FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
-    FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
-    FAddTask.Data := Pointer(PtrInt(AddTaskUniqueID));}
     for I := 0 to FDeviceManager.GetTaskCount-1 do
     begin
         NewTaskNode := AddNode(FDeviceNode, FDeviceManager.GetTask(I).TaskType,
                                              FDeviceManager.GetTask(I).FDisplayName);
         NewTaskNode.Data := FDeviceManager.GetTask(I);
-        
+
         { Add metadata subnodes for each task }
         AddMetadataNodes(NewTaskNode, FDeviceManager.GetTask(I).CreatedAt, FDeviceManager.GetTask(I).ExecutedAt);
+        JunctionListing :=  FDeviceManager.GetTask(I).GetJunctionListing;
+        For J := 0 To High(JunctionListing) do
+          begin
+            AddJunctionNode(NewTaskNode,JunctionListing[J]);
+          end;
     end;
-
-
-
     FDeviceNode.Expanded := True;
     PopulateDeviceInfo;
   end;
@@ -886,7 +915,10 @@ procedure TMainWindowForm.TaskFinished(
   Result: THardwareResult);
  begin
    FActiveTask.SetResult(Result);
+   RefreshTreeView;
+
  end;
+
 
 procedure TMainWindowForm.Error(
   const Msg: string);

@@ -23,8 +23,8 @@ uses
   annealconfig in 'src\ui\annealconfig.pas' {AnnealConfigForm},
   devicemanagerunit in 'src\core\devicemanagerunit.pas',
   taskselectdialogunit in 'src\ui\taskselectdialogunit.pas' {TaskSelectDialog},
-  logview in 'src\ui\logview.pas' {LogViewForm};
-
+  logview in 'src\ui\logview.pas' {LogViewForm},
+  nodejunctionmapper in 'src\core\nodejunctionmapper.pas';
 
 {$R *.res}
 

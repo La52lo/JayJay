@@ -4,11 +4,26 @@ unit DeviceManagerUnit;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, DateUtils, TaskSelectDialogUnit, AnnealTypes, System.JSON;
+  Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.JSON;
 
 type
 
   { TDeviceInfo - Holds device metadata }
+  TJunctionEntry = Record
+    Name: String;
+    Index: Integer;
+    NodeType: TNodeType;
+  end;
+
+  TJunctionListing = Array of TJunctionEntry;
+
+  TJunctionNodeData = class
+    FEntry : TJunctionEntry;
+  public
+    constructor Create(const Entry: TJunctionEntry);
+  end;
+
+
   TDeviceInfo = class
   private
     FName: string;
@@ -37,6 +52,9 @@ type
     constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
+    function GetJunctionListing : TJunctionListing; virtual; abstract;
+    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer); virtual; abstract;
     procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
     property Name: string read FName write FName;
     property TaskType: TNodeType read FTaskType;
@@ -45,13 +63,13 @@ type
     property IsRunning: Boolean read FIsRunning write FIsRunning;
 
   end;
-    TTypedHardwareTask<TInput, TOutput> = class(THardwareTask)
+    TTypedHardwareTask<TConfig, TData> = class(THardwareTask)
   private
-    FParameters: TInput;
-    FData: TOutput;
+    FConfig: TConfig;
+    FData: TData;
   public
-    property Parameters: TInput read FParameters write FParameters;
-    property Result: TOutput read FData write FData;
+    property Config: TConfig read FConfig write FConfig;
+    property Result: TData read FData write FData;
     {procedure SetResult(const AResult: THardwareResult); override;}
     procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
   end;
@@ -61,6 +79,9 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
+    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer); override;
+    function GetJunctionListing : TJunctionListing; override;
   end;
 
   TProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResult>)
@@ -68,6 +89,9 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
+    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer); override;
+    function GetJunctionListing : TJunctionListing; override;
   end;
 
   TBatchAnnealTask = class(TTypedHardwareTask<TAnnealParameterArray,TAnnealResultArray>)
@@ -75,6 +99,9 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
+    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer); override;
+    function GetJunctionListing : TJunctionListing; override;
   end;
 
     TBatchProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResultArray>)
@@ -82,6 +109,9 @@ type
     constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
+    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer); override;
+    function GetJunctionListing : TJunctionListing; override;
   end;
 
   { TDeviceManager - Manages device, task, and junction information }
@@ -114,6 +144,11 @@ var
 
 implementation
 
+constructor TJunctionNodeData.Create(const Entry: TJunctionEntry);
+begin
+  FEntry := Entry;
+end;
+
 { TDeviceInfo }
 
 constructor TDeviceInfo.Create(const AName: string);
@@ -142,7 +177,7 @@ AnnealParameters : TAnnealConfig;
 begin
   inherited;
   FDisplayName := 'Single Anneal';
-  with FParameters do
+  with FConfig do
     begin
       TargetResistance:= 4500;
       Temperature:= 70;
@@ -164,9 +199,9 @@ constructor TBatchAnnealTask.Create(const AName: string; ATaskType: TNodeType);
 begin
   inherited;
   FDisplayName := 'Batch Anneal';
-  SetLength(FParameters,1);
+  SetLength(FConfig,1);
   {Parameters := AnnealParameters;}
-  with FParameters[0] do
+  with FConfig[0] do
     begin
       TargetResistance:= 4500;
       Temperature:= 70;
@@ -187,7 +222,7 @@ constructor TProbeTask.Create(const AName: string; ATaskType: TNodeType);
 begin
   inherited;
   FDisplayName := 'Single Resistance';
-  with FParameters do
+  with FConfig do
     begin
       VoltageList        := [0.1,0.05,-0.05,-0.1];
       MeasureTime        := 0.5;
@@ -199,7 +234,7 @@ constructor TBatchProbeTask.Create(const AName: string; ATaskType: TNodeType);
 begin
   inherited;
   FDisplayName := 'Batch Resistance';
-  with FParameters do
+  with FConfig do
     begin
       VoltageList        := [0.1,0.05,-0.05,-0.1];
       MeasureTime        := 0.5;
@@ -219,12 +254,129 @@ end;
 
 procedure TBatchAnnealTask.SetResult(const AResult: THardwareResult);
 begin
-  Result := AResult.AnnealResultArray;
+  if AResult.CommandType = hcAnnealBatchCycle then
+  begin
+    setlength(FData,Length(FData)+1);
+    FData[High(FData)]:=AResult.AnnealedJunctionResult;
+  end;
 end;
 
 procedure TBatchProbeTask.SetResult(const AResult: THardwareResult);
 begin
-  Result := AResult.ProbingResultArray;
+  if AResult.CommandType = hcProbeBatchCycle then
+  begin
+    setlength(FData,Length(FData)+1);
+    FData[High(FData)]:=AResult.ProbedJunctionResult;
+  end;
+end;
+
+procedure TAnnealTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer);
+
+var
+I : Integer;
+begin
+SetLength(XValues,Length(Self.Result.ResistanceSamples));
+SetLength(YValues,Length(XValues));
+for I := Low(XValues) to High(XValues) do
+  begin
+      XValues[I]:= Self.Result.ResistanceSamples[I].Time/SecsPerDay;
+      YValues[I]:= Self.Result.ResistanceSamples[I].Value;
+  end;
+
+end;
+
+procedure TProbeTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer);
+var
+I : Integer;
+begin
+SetLength(XValues,Length(Self.Result.Readings));
+SetLength(YValues,Length(XValues));
+for I := Low(XValues) to High(XValues) do
+  begin
+      XValues[I]:= Self.FConfig.VoltageList[I];
+      YValues[I]:= Self.Result.Readings[I];
+  end;
+
+end;
+
+procedure TBatchAnnealTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer);
+var
+I : Integer;
+begin
+SetLength(XValues,Length(Self.Result[AJunctionIndex].AnnealResult.ResistanceSamples));
+SetLength(YValues,Length(XValues));
+for I := Low(XValues) to High(XValues) do
+  begin
+      XValues[I]:= Self.Result[AJunctionIndex].AnnealResult.
+                                ResistanceSamples[I].Time/SecsPerDay;
+      YValues[I]:= Self.Result[AJunctionIndex].AnnealResult.
+                                ResistanceSamples[I].Value;
+  end;
+
+end;
+
+procedure TBatchProbeTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+                AJunctionIndex: Integer);
+var
+I : Integer;
+begin
+SetLength(XValues,Length(Self.Result[AJunctionIndex].ProbingResult.Readings));
+SetLength(YValues,Length(XValues));
+for I := Low(XValues) to High(XValues) do
+  begin
+      XValues[I]:= Self.FConfig.VoltageList[I];
+      YValues[I]:= Self.Result[AJunctionIndex].ProbingResult.Readings[I];
+  end;
+
+end;
+
+function TAnnealTask.GetJunctionListing : TJunctionListing;
+begin
+     SetLength(Result,1);
+     Result[High(Result)].Name := 'Junction';
+     Result[High(Result)].Index := 1;
+     Result[High(Result)].NodeType := TNodeType.ntAnneal;
+
+end;
+
+function TProbeTask.GetJunctionListing : TJunctionListing;
+begin
+     SetLength(Result,1);
+     Result[High(Result)].Name := 'Junction';
+     Result[High(Result)].Index := 1;
+     Result[High(Result)].NodeType := TNodeType.ntProbe;
+
+end;
+
+function TBatchAnnealTask.GetJunctionListing : TJunctionListing;
+var I:Integer;
+begin
+   for I := 0 to Length(Self.Result)-1 do
+   begin
+     SetLength(Result,I+1);
+     Result[High(Result)].Name := Self.Result[I].Coord.Subsite;
+     Result[High(Result)].Index := I;
+     Result[High(Result)].NodeType := TNodeType.ntAnnealedJunction;
+
+   end;
+
+end;
+
+function TBatchProbeTask.GetJunctionListing : TJunctionListing;
+var I:Integer;
+begin
+   for I := 0 to Length(Self.Result)-1 do
+   begin
+     SetLength(Result,I+1);
+     Result[High(Result)].Name := Self.Result[I].Coord.Subsite;
+     Result[High(Result)].Index := I;
+     Result[High(Result)].NodeType := TNodeType.ntProbedJunction;
+
+   end;
+
 end;
 
 { TDeviceManager }
@@ -252,7 +404,7 @@ begin
     Parameters.AddPair('IsRunning', TJSONBool.Create(IsRunning));
 
 
-    Parameters.AddPair('Parameters', Self.Parameters.ToJSON);
+    Parameters.AddPair('Parameters', Self.Config.ToJSON);
 
   finally
     Result := Parameters;
@@ -265,9 +417,9 @@ end;
  i: Integer;
  begin
   ParameterArray := TJSONArray.Create;
-  for i := 0 to length(Parameters) - 1 do
+  for i := 0 to length(Config) - 1 do
       begin
-        ParameterArray.AddElement(Parameters[i].ToJSON);
+        ParameterArray.AddElement(Config[i].ToJSON);
       end;
   Result := ParameterArray;
  end;

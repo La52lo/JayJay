@@ -79,6 +79,9 @@ type
     FCompliance       : Double;
     FRunSelfCal       : Boolean;
 
+    function Anneal(const AParams: TAnnealConfig): TAnnealResult;
+    function ProbeResistance(AParams: TProbingParameters): TProbingResult;
+
   public
 
     constructor Create(
@@ -93,10 +96,11 @@ type
     destructor Destroy; override;
 
     function Initialize : Boolean;
-    function ProbeResistance(AParams: TProbingParameters): TProbingResult;
+
     procedure AnnealPulse(VPulse, AT: Double);
-    function Anneal(const AParams: TAnnealConfig): TAnnealResult;
+    function AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;
     function AnnealBatch(const ASpecs : TAnnealParameterArray) : TAnnealResultArray;
+    function ProbeSingle(AParams: TProbingParameters): TProbingResult;
     function ProbeBatch(AParams: TProbingParameters): TProbingResultArray;
     function IsDamaged(R, ThresholdOpen, ThresholdShort: Double): Boolean;
 
@@ -388,7 +392,7 @@ var
   Voltages        : TDoubleArray;
   Count, i, j     : Integer;
   V, R            : Double;
-  HWRes           : THardwareResult;
+
 begin
   if AParams.VoltageList = nil then
   begin
@@ -420,7 +424,16 @@ begin
   Result.StdResistance  := StdDoubleArray(Result.Readings);
   FObserver.Log(Format('Resistance: %.1f +/- %.1f Ohm',
                  [Result.MeanResistance, Result.StdResistance]));
-  HWRes.CommandType:=hcProbe;
+
+end;
+
+function TAnnealManager.ProbeSingle(AParams: TProbingParameters):TProbingResult;
+var
+HWRes           : THardwareResult;
+begin
+  FObserver.TaskStarted;
+  Result := ProbeResistance(AParams);
+  HWRes.CommandType:=hcProbeSingle;
   HWRes.ProbingResult:=Result;
   FObserver.TaskFinished(HWRes);
 end;
@@ -437,14 +450,15 @@ end;
 function TAnnealManager.Anneal(const AParams: TAnnealConfig): TAnnealResult;
 var
   Res                  : TAnnealResult;
-  HWRes                : THardwareResult;
   ProbingParameters    : TProbingParameters;
+  ProbingResult        : TProbingResult;
   T0                   : Double;
   CurrentR             : Double;
   Cycle, Pair          : Integer;
   TotalPairs           : Integer;
   Stop                 : Boolean;
   TStart               : Double;
+  StdDev               : Double;
 begin
   Res.TargetResistance := AParams.TargetResistance;
   T0 := NowSeconds;
@@ -457,9 +471,11 @@ begin
   ProbingParameters.MeasureTime:=0.5;
   FObserver.TaskStarted();
   SendZeroVoltage();
-  CurrentR := ProbeResistance(ProbingParameters).MeanResistance;
+  ProbingResult :=   ProbeResistance(ProbingParameters);
+  CurrentR := ProbingResult.MeanResistance;
   Res.AddResistanceSample(T0,CurrentR);
-  FObserver.MeasurementPoint(T0,CurrentR);
+  Res.AppendCycleStats(CurrentR,ProbingResult.StdResistance) ;
+  FObserver.MeasurementPoint(T0/SecsPerDay,CurrentR);
   { If initial R already exceeds target, skip the anneal loop }
   if (Res.FinalResistance >= AParams.TargetResistance) then
   begin
@@ -519,9 +535,11 @@ begin
     if Stop then Break;
 
     { Resistance measurement after all pairs in this cycle }
-    CurrentR := ProbeResistance(ProbingParameters).MeanResistance;
-    FObserver.MeasurementPoint(NowSeconds,CurrentR);
-    Res.AddResistanceSample(NowSeconds,CurrentR);
+    ProbingResult :=   ProbeResistance(ProbingParameters);
+    CurrentR := ProbingResult.MeanResistance;
+    Res.AddResistanceSample(T0,CurrentR);
+    Res.AppendCycleStats(CurrentR,ProbingResult.StdResistance) ;
+    FObserver.MeasurementPoint(NowSeconds/SecsPerDay,CurrentR);
     FObserver.Log(Format('Cycle %d/%d  R = %.1f Ohm',
                    [Cycle + 1, Aparams.Cycles, CurrentR]));
 
@@ -532,7 +550,7 @@ begin
                      'R = %.1f Ohm',
                      [Cycle + 1, TotalPairs, CurrentR]));
 
-       FObserver.MeasurementPoint(NowSeconds,CurrentR);
+       FObserver.MeasurementPoint(NowSeconds/SecsPerDay,CurrentR);
 
       Break;
     end;
@@ -545,19 +563,29 @@ begin
       Break;
     end;
   end;  { cycle loop }
-
+  Res.FinalCycleCount := Cycle;
+  Res.FinalPairCount := Pair;
   FAnalyzer.DisableOutputs;
   Res.Finalise;
   { Free previous result if any, store new one }
   Result  := Res;
-  HWRes.CommandType:=hcAnneal;
+
+end;
+
+function TAnnealManager.AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;
+var
+HWRes : THardwareResult;
+begin
+  FObserver.TaskStarted();
+  Result := Anneal(AParams);
+  HWRes.CommandType:=hcAnnealSingle;
   HWRes.AnnealResult:=Result;
   FObserver.TaskFinished(HWRes);
   FObserver.Log(Format('[Anneal complete. %d pulse pairs across %d cycles. ' +
                  'Final R = %.1f Ohm',
-                 [TotalPairs,
-                  Length(Res.ResistanceSamples) - 1,
-                  Res.FinalResistance]));
+                 [Result.FinalPairCount,
+                  Length(Result.ResistanceSamples) - 1,
+                  Result.FinalResistance]));
 end;
 
 function TAnnealManager.AnnealBatch(const ASpecs: TAnnealParameterArray
@@ -566,7 +594,8 @@ var
   Coord           : TProberCoord;
   i               : Integer;
   BR              : TAnnealResult;
-  HWRes           : THardwareResult;
+  CycleResult     : TAnnealedJunction;
+  HWRes,HWResCycle  : THardwareResult;
 begin
   SetLength(Result, 0);
   Coord := FProber.Start;
@@ -582,9 +611,12 @@ begin
 
     BR := Anneal(ASpecs[i]);
     SetLength(Result, Length(Result) + 1);
-    Result[High(Result)].AnnealResult := BR;
-    Result[High(Result)].Coord := Coord;
-
+    CycleResult.AnnealResult := BR;
+    CycleResult.Coord := Coord;
+    Result[High(Result)]:= CycleResult;
+    HWResCycle.CommandType:=hcAnnealBatchCycle;
+    HWResCycle.AnnealedJunctionResult:=CycleResult;
+    FObserver.TaskFinished(HWResCycle);
     { Advance prober (skip on last junction) }
     if i < High(ASpecs) then
     try
@@ -620,7 +652,9 @@ var
   i     : Integer;
   M     : TProbingResult;
   EndOfBatch : Boolean;
-  HWRes           : THardwareResult;
+  HWRes,HWResCycle: THardwareResult;
+  CycleResult     : TProbedJunction;
+
 begin
   SetLength(Result, 0);
   i:=0;
@@ -636,8 +670,12 @@ begin
 
       M := ProbeResistance(AParams);
       SetLength(Result, Length(Result) + 1);
-      Result[High(Result)].ProbingResult := M;
-      Result[High(Result)].Coord := Coord;
+      CycleResult.ProbingResult := M;
+      CycleResult.Coord := Coord;
+      Result[High(Result)]:= CycleResult;
+      HWResCycle.CommandType:=hcProbeBatchCycle;
+      HWResCycle.ProbedJunctionResult:=CycleResult;
+      FObserver.TaskFinished(HWResCycle);
       try
         Coord := FProber.NextSubsite;
       except

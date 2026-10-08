@@ -91,12 +91,12 @@ begin
           hcInitialize:
             FAnnealManager.Initialize;
 
-          hcAnneal:
-            FAnnealManager.Anneal(
+          hcAnnealSingle:
+            FAnnealManager.AnnealSingle(
               Command.AnnealParameters);
 
-          hcProbe:
-            FAnnealManager.ProbeResistance(
+          hcProbeSingle:
+            FAnnealManager.ProbeSingle(
               Command.ProbingParameters);
 
           hcAnnealBatch:
@@ -178,7 +178,7 @@ procedure THardwareThread.Anneal(
 var
   Command: THardwareCommand;
 begin
-  Command.CommandType := hcAnneal;
+  Command.CommandType := hcAnnealSingle;
 
   Command.AnnealParameters := Parameters;
 
@@ -215,7 +215,7 @@ procedure THardwareThread.Probe(
 var
   Command: THardwareCommand;
 begin
-  Command.CommandType := hcProbe;
+  Command.CommandType := hcProbeSingle;
 
   Command.ProbingParameters := Parameters;
   FCommandLock.Acquire;

@@ -135,6 +135,7 @@
         <DCCReference Include="src\ui\logview.pas">
             <Form>LogViewForm</Form>
         </DCCReference>
+        <DCCReference Include="src\core\nodejunctionmapper.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
