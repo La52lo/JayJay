@@ -4,7 +4,8 @@ unit DeviceManagerUnit;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.JSON;
+  Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.JSON,
+   System.Generics.Collections;
 
 type
 
@@ -53,9 +54,9 @@ type
     function ToJSON: TJSONValue; virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
     function GetJunctionListing : TJunctionListing; virtual; abstract;
-    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+    procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); virtual; abstract;
-    procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
+    {procedure SetConfig(const AResult: THardwareResult); virtual; abstract;}
     property Name: string read FName write FName;
     property TaskType: TNodeType read FTaskType;
     property CreatedAt: TDateTime read FCreatedAt;
@@ -70,8 +71,6 @@ type
   public
     property Config: TConfig read FConfig write FConfig;
     property Result: TData read FData write FData;
-    {procedure SetResult(const AResult: THardwareResult); override;}
-    procedure SetConfig(const AResult: THardwareResult); virtual; abstract;
   end;
 
   TAnnealTask = class(TTypedHardwareTask<TAnnealConfig,TAnnealResult>)
@@ -79,7 +78,7 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
-    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+    procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
     function GetJunctionListing : TJunctionListing; override;
   end;
@@ -89,7 +88,7 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
-    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+    procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
     function GetJunctionListing : TJunctionListing; override;
   end;
@@ -99,7 +98,7 @@ type
    constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
-    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+    procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
     function GetJunctionListing : TJunctionListing; override;
   end;
@@ -109,7 +108,7 @@ type
     constructor Create(const AName: string; ATaskType: TNodeType);
     function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
-    procedure GetChartPoints(var XValues,YValues: TDoubleArray;
+    procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
     function GetJunctionListing : TJunctionListing; override;
   end;
@@ -172,8 +171,6 @@ begin
 end;
 
 constructor TAnnealTask.Create(const AName: string; ATaskType: TNodeType);
-var
-AnnealParameters : TAnnealConfig;
 begin
   inherited;
   FDisplayName := 'Single Anneal';
@@ -270,7 +267,7 @@ begin
   end;
 end;
 
-procedure TAnnealTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+procedure TAnnealTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 
 var
@@ -286,7 +283,7 @@ for I := Low(XValues) to High(XValues) do
 
 end;
 
-procedure TProbeTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+procedure TProbeTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 var
 I : Integer;
@@ -301,7 +298,7 @@ for I := Low(XValues) to High(XValues) do
 
 end;
 
-procedure TBatchAnnealTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+procedure TBatchAnnealTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 var
 I : Integer;
@@ -318,7 +315,7 @@ for I := Low(XValues) to High(XValues) do
 
 end;
 
-procedure TBatchProbeTask.GetChartPoints(var XValues,YValues: TDoubleArray;
+procedure TBatchProbeTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 var
 I : Integer;
@@ -581,14 +578,6 @@ begin
       for i := 0 to FTasks.Count - 1 do
       begin
         Task := THardwareTask(FTasks[i]);
-        TaskObject := TJSONObject.Create;
-
-        {TaskObject.AddPair('TaskName', TJSONString.Create(Task.FName));
-        TaskObject.AddPair('TaskType', TJSONNumber.Create(Integer(Task.FTaskType)));
-        TaskObject.AddPair('DisplayName', TJSONString.Create(Task.FDisplayName));
-        TaskObject.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FCreatedAt)));
-        TaskObject.AddPair('ExecutedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', Task.FExecutedAt)));
-        TaskObject.AddPair('IsRunning', TJSONBool.Create(Task.FIsRunning));}
         TaskObject := Task.ToJSON;
         TasksArray.AddElement(TaskObject);
       end;

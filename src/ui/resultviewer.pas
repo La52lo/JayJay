@@ -21,12 +21,10 @@ type
     FJunctionLabel: string;
     FExecutionTime: TDateTime;
     Chart        : TChart4D;
-    procedure PlotData(XValues,YValues:  TArray<Double>);
-    procedure PlotVoltageData;
+
     procedure UpdateInfoPanel;
   public
-    procedure DisplayResult(AResult: TAnnealResult; const AJunctionLabel: string;
-                           AExecutionTime: TDateTime);
+  procedure PlotData(XValues,YValues:  TArray<Double>);
   end;
 
 var
@@ -58,29 +56,12 @@ begin
 end;
 
 procedure TResultViewerForm.PlotData(XValues,YValues: TArray<Double>);
- var
-  I: Integer;
 begin
   Chart.Plot.ClearSeries;
   Chart.Plot.AddLineSeries('Measurement', XValues, YValues);
   Self.Show;
 end;
 
-procedure TResultViewerForm.PlotVoltageData;
-{
-var
-  i: Integer;
-  Series: TLineSeries;  }
-begin                    {
-  if Chart1.SeriesCount < 2 then Exit;
-
-  Series := TLineSeries(Chart1.Series[1]);
-  Series.Clear;
-
-  for i := 0 to High(FResult.VoltageSamples) do
-    Series.AddXY(FResult.VoltageSamples[i].Time, FResult.VoltageSamples[i].Value);
-
-    }end;
 
 procedure TResultViewerForm.UpdateInfoPanel;
 var

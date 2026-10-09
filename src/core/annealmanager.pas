@@ -564,7 +564,7 @@ begin
     end;
   end;  { cycle loop }
   Res.FinalCycleCount := Cycle;
-  Res.FinalPairCount := Pair;
+  Res.FinalPairCount := TotalPairs;
   FAnalyzer.DisableOutputs;
   Res.Finalise;
   { Free previous result if any, store new one }
@@ -651,14 +651,12 @@ var
   Coord : TProberCoord;
   i     : Integer;
   M     : TProbingResult;
-  EndOfBatch : Boolean;
   HWRes,HWResCycle: THardwareResult;
   CycleResult     : TProbedJunction;
 
 begin
   SetLength(Result, 0);
   i:=0;
-  EndOfBatch:=False;
   FObserver.TaskStarted();
   Coord := FProber.Start;
   Fobserver.Log(Format('[ProbeBatch] Prober started at %s', [Coord.ToString]));

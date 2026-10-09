@@ -75,13 +75,11 @@ type
     FDeviceNode: TTreeNode;
     FSetupStatus: TSetupStatus;
     FCurrentThread: THardwareThread;
-    FCurrentTaskType: TTaskType;
     FSelectedTaskNode: TTreeNode;
     {FActiveNode: TTreeNode;}
     FActiveTask: THardwareTask;
     IsTaskRunning: Boolean;
     FDeviceManager: TDeviceManager;
-    FNodeToJunctionMap: TTreeArrayMapper;
     FJunctionNodeList: TObjectList<TJunctionNodeData>;
     Chart        : TChart4D;
     function GetImageIndexForNodeType(ANodeType: TNodeType): Integer;
@@ -204,16 +202,12 @@ begin
 end;
 
 procedure TMainWindowForm.CreateDefaultDevice;
-var
-  ConfigNode, ResultNode: TTreeNode;
 begin
   FDeviceManager.CreateNewDevice('Default Device');
   RefreshTreeView;
 end;
 
 procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
-var
-HardwareTask : THardwareTask;
 begin
    case (THardwareTask(TaskPointer)).TaskType of
        ntProbe:
@@ -285,7 +279,8 @@ function TMainWindowForm.AddJunctionNode(ANode: TTreeNode;
 var
   CreatedNode: TTreeNode;
 begin
-  if ANode = nil then Exit;
+
+  if ANode = nil then Exit(nil);
 
   CreatedNode := DeviceTreeView.Items.AddChild(ANode, JunctionEntry.Name);
   CreatedNode.ImageIndex := GetImageIndexForNodeType(JunctionEntry.NodeType);
@@ -432,7 +427,7 @@ begin
       ntBatchProbe:
       begin
         NewHardwareTask := TBatchProbeTask.Create('',TaskType)
-      end;
+      end else exit;
     end;
     TaskName := NewHardwareTask.FDisplayName;
     NewTaskNode := AddNode(FDeviceNode, TaskType, TaskName);
@@ -449,7 +444,6 @@ end;
 procedure TMainWindowForm.RunSingleButtonClick(Sender: TObject);
 var
   SelectedNode: TTreeNode;
-  TaskType: TTaskType;
 begin
   SelectedNode := DeviceTreeView.Selected;
   if SelectedNode = nil then
@@ -511,9 +505,11 @@ var
   AnnealTask : TAnnealTask;
   BatchAnnealTask : TBatchAnnealTask;
   ProbeTask : TProbeTask;
+  Task      : THardwareTask;
   AnnealParameters : TAnnealConfig;
   AnnealParameterArray :  TAnnealParameterArray;
   ProbingParameters : TProbingParameters;
+  XValues,YValues: TArray<Double>;
   ErrorMsg  : String;
   ErrorCol  : Integer;
   ErrorRow  : Integer;
@@ -590,7 +586,12 @@ begin
     begin
       ShowMessage('Displaying result chart for: ' + Node.Parent.Text);
       { TODO: Display result data }
-    end;
+    end else if (Node.Data <> nil) and (TObject(Node.Data) is TJunctionNodeData) then
+             begin
+               Task :=  THardwareTask(Node.Parent.Data);
+               Task.GetChartPoints(XValues,YValues,TJunctionNodeData(Node.Data).FEntry.Index);
+               ResultViewerForm.PlotData(XValues,YValues);
+             end;
   end;
 end;
 
@@ -658,7 +659,6 @@ end;
 procedure TMainWindowForm.EquipmentStatusBarDrawPanel(AEquipmentStatusBar: TStatusBar;
   Panel: TStatusPanel; const Rect: TRect);
 var
-  LedColor: TColor;
   LedRadius: Integer;
   LedX, LedY: Integer;
   TextX, TextY: Integer;
@@ -700,7 +700,6 @@ end;
 procedure TMainWindowForm.ToolButton1Click(Sender: TObject);
 var
   C: Integer;
-  S: TChartSeries;
   TempArray  : TArray<Double>;
   XTempArray  : TArray<Double>;
 begin
@@ -814,9 +813,8 @@ end;
 procedure TMainWindowForm.RefreshTreeView;
 var
  I,J : Integer;
- NewTaskNode,JunctionNode :TTreeNode;
+ NewTaskNode :TTreeNode;
  JunctionListing : TJunctionListing;
- JunctionNodeData : TJunctionNodeData;
 
 begin
   DeviceTreeView.Items.Clear;
@@ -892,7 +890,6 @@ procedure TMainWindowForm.MeasurementPoint(
   Value: Double);
 var
   C: Integer;
-  S: TChartSeries;
   TempArray  : TArray<Double>;
   XTempArray  : TArray<Double>;
 begin
