@@ -635,6 +635,7 @@ begin
     FCurrentThread.Free;
     FJunctionNodeList.Free;
     FDeviceManager.Free;
+
   end;
 
 end;

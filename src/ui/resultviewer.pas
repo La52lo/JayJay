@@ -5,17 +5,14 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls, AnnealTypes,
   Mitov.VCLTypes, VCL.LPControl, SLControlCollection, LPControlDrawLayers,
-  SLBasicDataDisplay, SLDataDisplay, SLDataChart, SLScope;
+  Chart4D.Types,Chart4D.Style,Chart4D.VCL, Chart4D.Series;
 
 type
 
   { TResultViewerForm }
 
   TResultViewerForm = class(TForm)
-    CloseButton: TButton;
     InfoPanel: TPanel;
-    SaveButton: TButton;
-    SLScope1: TSLScope;
     procedure CloseButtonClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure SaveButtonClick(Sender: TObject);
@@ -23,7 +20,8 @@ type
     FResult: TAnnealResult;
     FJunctionLabel: string;
     FExecutionTime: TDateTime;
-    procedure PlotResistanceData;
+    Chart        : TChart4D;
+    procedure PlotData(XValues,YValues:  TArray<Double>);
     procedure PlotVoltageData;
     procedure UpdateInfoPanel;
   public
@@ -44,30 +42,28 @@ procedure TResultViewerForm.FormCreate(Sender: TObject);
 var
   LineSeries: TLineSeries;}
 begin
- {
-   Create two series: one for resistance, one for voltage
-  LineSeries := TLineSeries.Create(Chart1);
-  LineSeries.Title := 'Resistance';
-  Chart1.AddSeries(LineSeries);
+  Chart := TChart4D.Create(Self);
+  Chart.Parent := Self;
+  Chart.Align := alClient;
 
-  LineSeries := TLineSeries.Create(Chart1);
-  LineSeries.Title := 'Voltage';
-  Chart1.AddSeries(LineSeries); }
+
+  Chart.Plot.Kind := TChartKind.Scatter;
+  Chart.Plot.Orientation := TChartOrientation.Vertical;
+  Chart.Plot.Title := 'Almost everyone is online';
+  Chart.Plot.Subtitle := 'Share of the population using the internet, 2020';
+  Chart.Plot.Source := 'Source: World Bank';
+  {Chart.Plot.Categories := ['Sweden', 'Spain', 'Belgium', 'Netherlands'];}
+  Chart.Plot.AddSeries('2020', [94.5, 93.2, 91.5, 91.3]);
+  {Chart.Plot.AddLineSeries();}
 end;
 
-procedure TResultViewerForm.PlotResistanceData;
-{
-var
-  i: Integer;
-  Series: TLineSeries;  }
-begin                   {
-  if Chart1.SeriesCount = 0 then Exit;
-
-  Series := TLineSeries(Chart1.Series[0]);
-  Series.Clear;
-
-  for i := 0 to High(FResult.ResistanceAvg) do
-    Series.AddXY(i, FResult.ResistanceAvg[i]);}
+procedure TResultViewerForm.PlotData(XValues,YValues: TArray<Double>);
+ var
+  I: Integer;
+begin
+  Chart.Plot.ClearSeries;
+  Chart.Plot.AddLineSeries('Measurement', XValues, YValues);
+  Self.Show;
 end;
 
 procedure TResultViewerForm.PlotVoltageData;
@@ -97,18 +93,6 @@ begin
   InfoPanel.Caption := InfoText;
 end;
 
-procedure TResultViewerForm.DisplayResult(AResult: TAnnealResult;
-  const AJunctionLabel: string; AExecutionTime: TDateTime);
-begin
-  FResult := AResult;
-  FJunctionLabel := AJunctionLabel;
-  FExecutionTime := AExecutionTime;
-
-  Caption := 'Result: ' + AJunctionLabel;
-  PlotResistanceData;
-  PlotVoltageData;
-  UpdateInfoPanel;
-end;
 
 procedure TResultViewerForm.SaveButtonClick(Sender: TObject);
 var
