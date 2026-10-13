@@ -54,7 +54,7 @@ object AnnealConfigForm: TAnnealConfigForm
       Left = 8
       Top = 3
       Width = 104
-      Height = 24
+      Height = 21
       Margins.Left = 8
       Margins.Right = 8
       Align = alLeft
@@ -66,7 +66,6 @@ object AnnealConfigForm: TAnnealConfigForm
       Font.Style = []
       ParentFont = False
       Layout = tlCenter
-      ExplicitHeight = 21
     end
     object AnnealSpin: TSpinEdit
       Left = 120

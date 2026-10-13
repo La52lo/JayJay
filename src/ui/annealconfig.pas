@@ -30,15 +30,15 @@ type
   private
     FModified: Boolean;
     FAnnealConfig: TAnnealConfig;
-    FAnnealConfigArray: TAnnealParameterArray;
-    procedure LoadGridFromConfig(AConfig: TAnnealParameterArray);
+    FAnnealConfigArray: TAnnealConfigArray;
+    procedure LoadGridFromConfig(AConfig: TAnnealConfigArray);
     {procedure SaveCurrentConfig; }
     procedure DisplaySiteNumber;
 
   public
 
     procedure InitializeFromConfig(AConfig: TAnnealConfig; ATaskName:String); overload;
-    procedure InitializeFromConfig(AConfig: TAnnealParameterArray; ATaskName:String); overload;
+    procedure InitializeFromConfig(AConfig: TAnnealConfigArray; ATaskName:String); overload;
     function GetModified: Boolean;
     function RowToParamRecord(
             Row : Integer;
@@ -48,7 +48,7 @@ type
             ): Boolean;
 
     function GridToParamArray(
-            out Data: TAnnealParameterArray;
+            out Data: TAnnealConfigArray;
             out ErrorMessage: string;
             out ErrorRow: Integer;
             out ErrorCol: Integer
@@ -109,7 +109,7 @@ begin
   {SaveCurrentConfig;}
 end;
 
-procedure TAnnealConfigForm.LoadGridFromConfig(AConfig: TAnnealParameterArray);
+procedure TAnnealConfigForm.LoadGridFromConfig(AConfig: TAnnealConfigArray);
 var
   i: Integer;
 begin
@@ -196,7 +196,7 @@ begin
   ModalResult := mrCancel;
 end;
 
-procedure TAnnealConfigForm.InitializeFromConfig(AConfig: TAnnealParameterArray; ATaskName:String);
+procedure TAnnealConfigForm.InitializeFromConfig(AConfig: TAnnealConfigArray; ATaskName:String);
 begin
   Caption := 'Configure Task: ' + ATaskName;
   FAnnealConfigArray := AConfig;
@@ -413,7 +413,7 @@ end;
 
 
 function TAnnealConfigForm.GridToParamArray(
-            out Data: TAnnealParameterArray;
+            out Data: TAnnealConfigArray;
             out ErrorMessage: string;
             out ErrorRow: Integer;
             out ErrorCol: Integer

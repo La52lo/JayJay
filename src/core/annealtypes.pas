@@ -34,7 +34,7 @@ type
     procedure   FromJSON(AJsonObj: TJSONObject);
   end;
 
-  TAnnealParameterArray =  TArray<TAnnealConfig>;
+  TAnnealConfigArray =  TArray<TAnnealConfig>;
   TDoubleArray  = array of Double;
   TProbingParameters = record
       VoltageList        : TDoubleArray;
@@ -127,7 +127,7 @@ type
     CommandType: THardwareCommandType;
     AnnealParameters: TAnnealConfig;
     ProbingParameters: TProbingParameters;
-    AnnealParameterArray: TAnnealParameterArray;
+    AnnealConfigArray: TAnnealConfigArray;
   end;
 
   THardwareResult = record
@@ -365,7 +365,21 @@ end;
 
 procedure TAnnealConfig.FromJSON(AJsonObj: TJSONObject);
 begin
+if AJsonObj = nil then Exit;
 
+  MeasureVoltage := AJsonObj.GetValue('MeasureVoltage', 0.0);
+  MeasureTime := AJsonObj.GetValue('MeasureTime', 0.0);
+  PulsePositive := AJsonObj.GetValue('PulsePositive', 0.0);
+  PulseNegative := AJsonObj.GetValue('PulseNegative', 0.0);
+  PulseLength := AJsonObj.GetValue('PulseLength', 0.0);
+  PulsePairs := AJsonObj.GetValue('PulsePairs', 0);
+  Cycles := AJsonObj.GetValue('Cycles', 0);
+  TargetResistance := AJsonObj.GetValue('TargetResistance', 0.0);
+  Temperature := AJsonObj.GetValue('Temperature', 0.0);
+  ThresholdOpen := AJsonObj.GetValue('ThresholdOpen', 0.0);
+  ThresholdShort := AJsonObj.GetValue('ThresholdShort', 0.0);
+  InitialWait := AJsonObj.GetValue('InitialWait', 0.0);
+  MeasureVoltage := AJsonObj.GetValue('MeasureVoltage', 0.0);
 end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);
