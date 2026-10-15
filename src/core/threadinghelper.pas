@@ -34,7 +34,7 @@ type
     procedure Initialize;
     procedure Anneal(const Parameters: TAnnealConfig);
     procedure Probe(const Parameters: TProbingParameters);
-    procedure AnnealBatch(const Parameters: TAnnealParameterArray);
+    procedure AnnealBatch(const Parameters: TAnnealConfigArray);
     procedure ProbeBatch(const Parameters: TProbingParameters);
 
     { IMeasurementObserver implementation }
@@ -101,7 +101,7 @@ begin
 
           hcAnnealBatch:
             FAnnealManager.AnnealBatch(
-              Command.AnnealParameterArray);
+              Command.AnnealConfigArray);
 
           hcProbeBatch:
             FAnnealManager.ProbeBatch(
@@ -193,13 +193,13 @@ begin
 end;
 
 procedure THardwareThread.AnnealBatch(
-  const Parameters: TAnnealParameterArray);
+  const Parameters: TAnnealConfigArray);
 var
   Command: THardwareCommand;
 begin
   Command.CommandType := hcAnnealBatch;
 
-  Command.AnnealParameterArray := Parameters;
+  Command.AnnealConfigArray := Parameters;
   FCommandLock.Acquire;
   try
     FCommandQueue.Enqueue(Command);

@@ -33,7 +33,7 @@ type
 
     TAnnelBatchNode = class(TDeviceNode)
     public
-      FAnnealParameterArray: TAnnealParameterArray;
+      FAnnealConfigArray: TAnnealConfigArray;
       FAnnealResultArray:     TAnnealResultArray;
     end;
 

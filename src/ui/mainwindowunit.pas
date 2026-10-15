@@ -507,7 +507,7 @@ var
   ProbeTask : TProbeTask;
   Task      : THardwareTask;
   AnnealParameters : TAnnealConfig;
-  AnnealParameterArray :  TAnnealParameterArray;
+  AnnealParameterArray :  TAnnealConfigArray;
   ProbingParameters : TProbingParameters;
   XValues,YValues: TArray<Double>;
   ErrorMsg  : String;

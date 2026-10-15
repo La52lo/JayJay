@@ -99,7 +99,7 @@ type
 
     procedure AnnealPulse(VPulse, AT: Double);
     function AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;
-    function AnnealBatch(const ASpecs : TAnnealParameterArray) : TAnnealResultArray;
+    function AnnealBatch(const ASpecs : TAnnealConfigArray) : TAnnealResultArray;
     function ProbeSingle(AParams: TProbingParameters): TProbingResult;
     function ProbeBatch(AParams: TProbingParameters): TProbingResultArray;
     function IsDamaged(R, ThresholdOpen, ThresholdShort: Double): Boolean;
@@ -588,7 +588,7 @@ begin
                   Result.FinalResistance]));
 end;
 
-function TAnnealManager.AnnealBatch(const ASpecs: TAnnealParameterArray
+function TAnnealManager.AnnealBatch(const ASpecs: TAnnealConfigArray
 ): TAnnealResultArray;
 var
   Coord           : TProberCoord;

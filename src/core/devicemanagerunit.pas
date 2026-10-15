@@ -43,7 +43,6 @@ type
   THardwareTask = class
   private
     FName: string;
-
     FTaskType: TNodeType;
     FCreatedAt: TDateTime;
     FExecutedAt: TDateTime;
@@ -51,7 +50,6 @@ type
   public
     FDisplayName: string;
     constructor Create(const AName: string; ATaskType: TNodeType);
-    function ToJSON: TJSONValue; virtual; abstract;
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
     function GetJunctionListing : TJunctionListing; virtual; abstract;
     procedure GetChartPoints(var XValues,YValues: TArray<Double>;
@@ -64,19 +62,21 @@ type
     property IsRunning: Boolean read FIsRunning write FIsRunning;
 
   end;
-    TTypedHardwareTask<TConfig, TData> = class(THardwareTask)
+
+
+  TTypedHardwareTask<TConfig, TData> = class(THardwareTask)
   private
     FConfig: TConfig;
     FData: TData;
   public
     property Config: TConfig read FConfig write FConfig;
     property Result: TData read FData write FData;
+    procedure SetResult(const AResult: THardwareResult); override;
   end;
 
   TAnnealTask = class(TTypedHardwareTask<TAnnealConfig,TAnnealResult>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
     procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
@@ -86,17 +86,15 @@ type
   TProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResult>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
     procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
     function GetJunctionListing : TJunctionListing; override;
   end;
 
-  TBatchAnnealTask = class(TTypedHardwareTask<TAnnealParameterArray,TAnnealResultArray>)
+  TBatchAnnealTask = class(TTypedHardwareTask<TAnnealConfigArray,TAnnealResultArray>)
    public
    constructor Create(const AName: string; ATaskType: TNodeType);
-    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
     procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
@@ -106,7 +104,6 @@ type
     TBatchProbeTask = class(TTypedHardwareTask<TProbingParameters,TProbingResultArray>)
    public
     constructor Create(const AName: string; ATaskType: TNodeType);
-    function ToJSON: TJSONValue; override;
     procedure SetResult(const AResult: THardwareResult); override;
     procedure GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer); override;
@@ -377,59 +374,6 @@ begin
 end;
 
 { TDeviceManager }
-function TAnnealTask.ToJSON: TJSONValue;
-var
-  Parameters: TJSONObject;
-begin
-    Parameters := TJSONObject.Create;
-  try
-    Parameters.AddPair('TaskName', TJSONString.Create(Name));
-    Parameters.AddPair('TaskType', TJSONNumber.Create(Integer(TaskType)));
-    Parameters.AddPair('DisplayName', TJSONString.Create(FDisplayName));
-    Parameters.AddPair(
-      'CreatedAt',
-      TJSONString.Create(
-        FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', CreatedAt)
-      )
-    );
-    Parameters.AddPair(
-      'ExecutedAt',
-      TJSONString.Create(
-        FormatDateTime('yyyy-mm-dd"T"hh:nn:ss.zzz', ExecutedAt)
-      )
-    );
-    Parameters.AddPair('IsRunning', TJSONBool.Create(IsRunning));
-
-
-    Parameters.AddPair('Parameters', Self.Config.ToJSON);
-
-  finally
-    Result := Parameters;
-  end;
-end;
-
- function TBatchAnnealTask.ToJSON: TJSONValue;
- var
- ParameterArray: TJSONArray;
- i: Integer;
- begin
-  ParameterArray := TJSONArray.Create;
-  for i := 0 to length(Config) - 1 do
-      begin
-        ParameterArray.AddElement(Config[i].ToJSON);
-      end;
-  Result := ParameterArray;
- end;
-
- function TProbeTask.ToJSON: TJSONValue;
- begin
-
- end;
-
- function TBatchProbeTask.ToJSON: TJSONValue;
- begin
-
- end;
 
 
 constructor TDeviceManager.Create;

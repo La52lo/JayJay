@@ -78,14 +78,10 @@ type
       procedure   AppendPulseDuration(ADuration: Double);
       procedure   Finalise;
       function    FinalResistance: Double;   { last entry in ResistanceAvg, or -1 }
-      function    ToJSON: TJSONObject;
-      procedure   FromJSON(AJsonObj: TJSONObject);
     end;
   TAnnealedJunction = record
       AnnealResult : TAnnealResult;
       Coord        : TProberCoord;
-
-      function ToJSON: TJSONObject;
   end;
 
   TAnnealResultArray = array of TAnnealedJunction;
@@ -96,8 +92,6 @@ type
       StdResistance   : Double;
       Success         : Boolean;
       ErrorMsg        : string;
-      function ToJSON: TJSONObject;
-      procedure FromJSON(AJsonObj: TJSONObject);
     end;
 
   TProbedJunction = record
@@ -138,19 +132,11 @@ type
     ProbedJunctionResult: TProbedJunction;
     AnnealResultArray: TAnnealResultArray;
     ProbingResultArray: TProbingResultArray;
-    function ToJSON: TJSONObject;
-    procedure FromJSON(AJsonObj: TJSONObject);
   end;
 
   function NowSeconds: Double;
   function MeanDoubleArray(const A: TDoubleArray): Double;
   function StdDoubleArray(const A: TDoubleArray): Double;
-  function DoubleArrayToJSON(const A: TDoubleArray): TJSONArray;
-  function SampleArrayToJSON(const A: TSampleArray): TJSONArray;
-  function ProberCoordToJSON(const ACoord: TProberCoord): TJSONObject;
-  function JSONToDoubleArray(AJsonArray: TJSONArray): TDoubleArray;
-  function JSONToSampleArray(AJsonArray: TJSONArray): TSampleArray;
-  function JSONToProberCoord(AJsonObj: TJSONObject): TProberCoord;
 
 implementation
 { Current time as seconds since the Unix epoch (used for relative timing). }
@@ -182,104 +168,6 @@ begin
   Result := Sqrt(S / Length(A));
 end;
 
-function DoubleArrayToJSON(const A: TDoubleArray): TJSONArray;
-var
-  i: Integer;
-begin
-  Result := TJSONArray.Create;
-  for i := 0 to High(A) do
-    Result.AddElement(TJSONNumber.Create(A[i]));
-end;
-
-function SampleArrayToJSON(const A: TSampleArray): TJSONArray;
-var
-  i: Integer;
-  SampleObj: TJSONObject;
-begin
-  Result := TJSONArray.Create;
-  for i := 0 to High(A) do
-  begin
-    SampleObj := TJSONObject.Create;
-    SampleObj.AddPair('Time', TJSONNumber.Create(A[i].Time));
-    SampleObj.AddPair('Value', TJSONNumber.Create(A[i].Value));
-    Result.AddElement(SampleObj);
-  end;
-end;
-
-function ProberCoordToJSON(const ACoord: TProberCoord): TJSONObject;
-begin
-  Result := TJSONObject.Create;
-  Result.AddPair('Chip_X', TJSONNumber.Create(ACoord.Chip_X));
-  Result.AddPair('Chip_Y', TJSONNumber.Create(ACoord.Chip_Y));
-  Result.AddPair('Subsite_X', TJSONNumber.Create(ACoord.Subsite_X));
-  Result.AddPair('Subsite_Y', TJSONNumber.Create(ACoord.Subsite_Y));
-  Result.AddPair('Subsite', TJSONString.Create(ACoord.Subsite));
-  Result.AddPair('Break', TJSONBool.Create(ACoord.Break));
-end;
-
-function JSONToDoubleArray(AJsonArray: TJSONArray): TDoubleArray;
-var
-  i: Integer;
-begin
-  if AJsonArray = nil then
-  begin
-    SetLength(Result, 0);
-    Exit;
-  end;
-
-  SetLength(Result, AJsonArray.Count);
-  for i := 0 to AJsonArray.Count - 1 do
-  begin
-    if AJsonArray[i] is TJSONNumber then
-      Result[i] := TJSONNumber(AJsonArray[i]).AsDouble
-    else
-      Result[i] := 0.0;
-  end;
-end;
-
-function JSONToSampleArray(AJsonArray: TJSONArray): TSampleArray;
-var
-  i: Integer;
-  SampleObj: TJSONObject;
-begin
-  if AJsonArray = nil then
-  begin
-    SetLength(Result, 0);
-    Exit;
-  end;
-
-  SetLength(Result, AJsonArray.Count);
-  for i := 0 to AJsonArray.Count - 1 do
-  begin
-    if AJsonArray[i] is TJSONObject then
-    begin
-      SampleObj := TJSONObject(AJsonArray[i]);
-      Result[i].Time := SampleObj.GetValue('Time', 0.0);
-      Result[i].Value := SampleObj.GetValue('Value', 0.0);
-    end
-    else
-    begin
-      Result[i].Time := 0.0;
-      Result[i].Value := 0.0;
-    end;
-  end;
-end;
-
-function JSONToProberCoord(AJsonObj: TJSONObject): TProberCoord;
-begin
-  if AJsonObj = nil then
-  begin
-    FillChar(Result, SizeOf(Result), 0);
-    Exit;
-  end;
-
-  Result.Chip_X := AJsonObj.GetValue('Chip_X', 0);
-  Result.Chip_Y := AJsonObj.GetValue('Chip_Y', 0);
-  Result.Subsite_X := AJsonObj.GetValue('Subsite_X', 0.0);
-  Result.Subsite_Y := AJsonObj.GetValue('Subsite_Y', 0.0);
-  Result.Subsite := AJsonObj.GetValue('Subsite', '');
-  Result.Break := AJsonObj.GetValue('Break', False);
-end;
 
 // ---------------------------------------------------------------------------
 // TProberCoord
@@ -309,78 +197,6 @@ end;
  }
 
 
-function TAnnealConfig.ToJSON: TJSONObject;
-
-begin
-  Result := TJSONObject.Create;
-      Result.AddPair(
-      'MeasureVoltage',
-      TJSONNumber.Create(Self.MeasureVoltage)
-    );
-    Result.AddPair(
-      'MeasureTime',
-      TJSONNumber.Create(Self.MeasureTime)
-    );
-    Result.AddPair(
-      'PulsePositive',
-      TJSONNumber.Create(Self.PulsePositive)
-    );
-    Result.AddPair(
-      'PulseNegative',
-      TJSONNumber.Create(Self.PulseNegative)
-    );
-    Result.AddPair(
-      'PulseLength',
-      TJSONNumber.Create(Self.PulseLength)
-    );
-    Result.AddPair(
-      'PulsePairs',
-      TJSONNumber.Create(Self.PulsePairs)
-    );
-    Result.AddPair(
-      'Cycles',
-      TJSONNumber.Create(Self.Cycles)
-    );
-    Result.AddPair(
-      'TargetResistance',
-      TJSONNumber.Create(Self.TargetResistance)
-    );
-    Result.AddPair(
-      'Temperature',
-      TJSONNumber.Create(Self.Temperature)
-    );
-    Result.AddPair(
-      'ThresholdOpen',
-      TJSONNumber.Create(Self.ThresholdOpen)
-    );
-    Result.AddPair(
-      'ThresholdShort',
-      TJSONNumber.Create(Self.ThresholdShort)
-    );
-    Result.AddPair(
-      'InitialWait',
-      TJSONNumber.Create(Self.InitialWait)
-    );
-end;
-
-procedure TAnnealConfig.FromJSON(AJsonObj: TJSONObject);
-begin
-if AJsonObj = nil then Exit;
-
-  MeasureVoltage := AJsonObj.GetValue('MeasureVoltage', 0.0);
-  MeasureTime := AJsonObj.GetValue('MeasureTime', 0.0);
-  PulsePositive := AJsonObj.GetValue('PulsePositive', 0.0);
-  PulseNegative := AJsonObj.GetValue('PulseNegative', 0.0);
-  PulseLength := AJsonObj.GetValue('PulseLength', 0.0);
-  PulsePairs := AJsonObj.GetValue('PulsePairs', 0);
-  Cycles := AJsonObj.GetValue('Cycles', 0);
-  TargetResistance := AJsonObj.GetValue('TargetResistance', 0.0);
-  Temperature := AJsonObj.GetValue('Temperature', 0.0);
-  ThresholdOpen := AJsonObj.GetValue('ThresholdOpen', 0.0);
-  ThresholdShort := AJsonObj.GetValue('ThresholdShort', 0.0);
-  InitialWait := AJsonObj.GetValue('InitialWait', 0.0);
-  MeasureVoltage := AJsonObj.GetValue('MeasureVoltage', 0.0);
-end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);
 var N: Integer;
@@ -432,149 +248,5 @@ begin
   else           Result := ResistanceAvg[N - 1];
 end;
 
-function TAnnealResult.ToJSON: TJSONObject;
-begin
-  Result := TJSONObject.Create;
-  Result.AddPair('ResistanceSamples', SampleArrayToJSON(ResistanceSamples));
-  Result.AddPair('ResistanceAvg', DoubleArrayToJSON(ResistanceAvg));
-  Result.AddPair('ResistanceStd', DoubleArrayToJSON(ResistanceStd));
-  Result.AddPair('VoltageSamples', SampleArrayToJSON(VoltageSamples));
-  Result.AddPair('PulseDurations', DoubleArrayToJSON(PulseDurations));
-  Result.AddPair('TargetResistance', TJSONNumber.Create(TargetResistance));
-  Result.AddPair('PulseDurationMean', TJSONNumber.Create(PulseDurationMean));
-  Result.AddPair('PulseDurationStd', TJSONNumber.Create(PulseDurationStd));
-end;
-
-function TAnnealedJunction.ToJSON: TJSONObject;
-var
- JunctionObj : TJSONObject;
-begin
-  JunctionObj := TJSONObject.Create;
-  JunctionObj.AddPair('AnnealResult', AnnealResult.ToJSON);
-  JunctionObj.AddPair('Coord', ProberCoordToJSON(Coord));
-  Result := JunctionObj;
-end;
-
-procedure TAnnealResult.FromJSON(AJsonObj: TJSONObject);
-begin
-  if AJsonObj = nil then Exit;
-
-  ResistanceSamples := JSONToSampleArray(TJSONArray(AJsonObj.Get('ResistanceSamples')));
-  ResistanceAvg := JSONToDoubleArray(TJSONArray(AJsonObj.Get('ResistanceAvg')));
-  ResistanceStd := JSONToDoubleArray(TJSONArray(AJsonObj.Get('ResistanceStd')));
-  VoltageSamples := JSONToSampleArray(TJSONArray(AJsonObj.Get('VoltageSamples')));
-  PulseDurations := JSONToDoubleArray(TJSONArray(AJsonObj.Get('PulseDurations')));
-  TargetResistance := AJsonObj.GetValue('TargetResistance', 0.0);
-  PulseDurationMean := AJsonObj.GetValue('PulseDurationMean', 0.0);
-  PulseDurationStd := AJsonObj.GetValue('PulseDurationStd', 0.0);
-end;
-
-function TProbingResult.ToJSON: TJSONObject;
-begin
-  Result := TJSONObject.Create;
-  Result.AddPair('Readings', DoubleArrayToJSON(Readings));
-  Result.AddPair('MeanResistance', TJSONNumber.Create(MeanResistance));
-  Result.AddPair('StdResistance', TJSONNumber.Create(StdResistance));
-  Result.AddPair('Success', TJSONBool.Create(Success));
-  Result.AddPair('ErrorMsg', TJSONString.Create(ErrorMsg));
-end;
-
-procedure TProbingResult.FromJSON(AJsonObj: TJSONObject);
-begin
-  if AJsonObj = nil then Exit;
-
-  Readings := JSONToDoubleArray(TJSONArray(AJsonObj.Get('Readings')));
-  MeanResistance := AJsonObj.GetValue('MeanResistance', 0.0);
-  StdResistance := AJsonObj.GetValue('StdResistance', 0.0);
-  Success := AJsonObj.GetValue('Success', False);
-  ErrorMsg := AJsonObj.GetValue('ErrorMsg', '');
-end;
-
-function THardwareResult.ToJSON: TJSONObject;
-var
-  i: Integer;
-  AnnealArray, ProbingArray: TJSONArray;
-  JunctionObj: TJSONObject;
-begin
-  Result := TJSONObject.Create;
-  Result.AddPair('CommandType', TJSONNumber.Create(Integer(CommandType)));
-
-  { Serialize single anneal result }
-  Result.AddPair('AnnealResult', AnnealResult.ToJSON);
-
-  { Serialize single probing result }
-  Result.AddPair('ProbingResult', ProbingResult.ToJSON);
-
-  { Serialize batch anneal results (array of TAnnealedJunction) }
-  AnnealArray := TJSONArray.Create;
-  for i := 0 to High(AnnealResultArray) do
-  begin
-    JunctionObj := TJSONObject.Create;
-    JunctionObj.AddPair('AnnealResult', AnnealResultArray[i].AnnealResult.ToJSON);
-    JunctionObj.AddPair('Coord', ProberCoordToJSON(AnnealResultArray[i].Coord));
-    AnnealArray.AddElement(JunctionObj);
-  end;
-  Result.AddPair('AnnealResultArray', AnnealArray);
-
-  { Serialize batch probing results (array of TProbedJunction) }
-  ProbingArray := TJSONArray.Create;
-  for i := 0 to High(ProbingResultArray) do
-  begin
-    JunctionObj := TJSONObject.Create;
-    JunctionObj.AddPair('ProbingResult', ProbingResultArray[i].ProbingResult.ToJSON);
-    JunctionObj.AddPair('Coord', ProberCoordToJSON(ProbingResultArray[i].Coord));
-    ProbingArray.AddElement(JunctionObj);
-  end;
-  Result.AddPair('ProbingResultArray', ProbingArray);
-end;
-
-procedure THardwareResult.FromJSON(AJsonObj: TJSONObject);
-var
-  i: Integer;
-  AnnealArray, ProbingArray: TJSONArray;
-  JunctionObj: TJSONObject;
-begin
-  if AJsonObj = nil then Exit;
-
-  { Deserialize command type }
-  CommandType := THardwareCommandType(AJsonObj.GetValue('CommandType', 0));
-
-  { Deserialize single anneal result }
-  if AJsonObj.FindValue('AnnealResult') <> nil then
-    AnnealResult.FromJSON(TJSONObject(AJsonObj.Get('AnnealResult')));
-
-  { Deserialize single probing result }
-  if AJsonObj.FindValue('ProbingResult') <> nil then
-    ProbingResult.FromJSON(TJSONObject(AJsonObj.Get('ProbingResult')));
-  { Deserialize batch anneal results }
-  AnnealArray := TJSONArray(AJsonObj.Get('AnnealResultArray'));
-  if AnnealArray <> nil then
-  begin
-    SetLength(AnnealResultArray, AnnealArray.Count);
-    for i := 0 to AnnealArray.Count - 1 do
-    begin
-      JunctionObj := TJSONObject(AnnealArray[i]);
-      AnnealResultArray[i].AnnealResult.FromJSON(TJSONObject(JunctionObj.Get('AnnealResult')));
-      AnnealResultArray[i].Coord := JSONToProberCoord(TJSONObject(JunctionObj.Get('Coord')));
-    end;
-  end
-  else
-    SetLength(AnnealResultArray, 0);
-
-  { Deserialize batch probing results }
-  ProbingArray := TJSONArray(AJsonObj.Get('ProbingResultArray'));
-  if ProbingArray <> nil then
-  begin
-    SetLength(ProbingResultArray, ProbingArray.Count);
-    for i := 0 to ProbingArray.Count - 1 do
-    begin
-      JunctionObj := TJSONObject(ProbingArray[i]);
-      ProbingResultArray[i].ProbingResult.FromJSON(TJSONObject(JunctionObj.Get('ProbingResult')));
-      ProbingResultArray[i].Coord := JSONToProberCoord(TJSONObject(JunctionObj.Get('Coord')));
-    end;
-  end
-  else
-    SetLength(ProbingResultArray, 0);
-end;
 
 end.
