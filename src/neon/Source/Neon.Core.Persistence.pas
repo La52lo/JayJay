@@ -1,0 +1,2798 @@
+{******************************************************************************}
+{                                                                              }
+{  Neon: JSON Serialization Library for Delphi                                 }
+{  Copyright (c) 2018 Paolo Rossi                                              }
+{  https://github.com/paolo-rossi/neon-library                                 }
+{                                                                              }
+{  Licensed under the MIT license                                              }
+{                                                                              }
+{******************************************************************************}
+unit Neon.Core.Persistence;
+
+{$I Neon.inc}
+
+interface
+
+uses
+  System.SysUtils, System.Classes, System.Rtti, System.SyncObjs, System.TypInfo,
+  System.Generics.Collections, System.JSON, System.Generics.Defaults,
+
+  Neon.Core.Types,
+  Neon.Core.Attributes,
+  Neon.Core.DynamicTypes;
+
+{$SCOPEDENUMS ON}
+
+type
+
+  {$REGION 'Forward Declarations'}
+
+  TCustomFactory = class;
+  TCustomFactoryClass = class of TCustomFactory;
+
+  TCustomSerializer = class;
+  TCustomSerializerClass = class of TCustomSerializer;
+
+  TNeonSerializerRegistry = class;
+  TNeonRttiObject = class;
+  TNeonRttiCache = class;
+  INeonRttiCache = interface;
+
+  INeonConfiguration = interface;
+  TNeonConfiguration = class;
+
+  {$ENDREGION}
+
+  {$REGION 'Custom Serializer'}
+
+  IConfigurationContext = interface
+  ['{3954FFB5-2D3D-4978-AADA-FEC5C0D73FD0}']
+    function GetConfiguration: INeonConfiguration;
+  end;
+
+  ISerializerContext = interface(IConfigurationContext)
+  ['{36A014FC-9E3F-4EBF-9545-CF9DBCBF507C}']
+
+    /// <summary>
+    ///   Method to write value from a custom serializer
+    /// </summary>
+    function WriteDataMember(const AValue: TValue; ACustomProcess: Boolean = True): TJSONValue;
+
+    /// <summary>
+    ///   Writer for members of objects and records. In a custom serializer can
+    ///   be used to process the **same** object or record
+    /// </summary>
+    procedure WriteMembers(AType: TRttiType; AInstance: Pointer; AResult: TJSONValue);
+
+    /// <summary>
+    ///   Useful method to add serialization errors in the serializer's log
+    /// </summary>
+    procedure LogError(const AMessage: string);
+  end;
+
+  IDeserializerContext = interface(IConfigurationContext)
+  ['{5351D1F9-99B3-4826-B981-4CBF926085D6}']
+    /// <summary>
+    ///   Method to convert a TJSONValue into a TValue (from a custom
+    ///   serializer)
+    /// </summary>
+    function ReadDataMember(AJSONValue: TJSONValue; AType: TRttiType; const AData: TValue; ACustomProcess: Boolean = True): TValue;
+
+    /// <summary>
+    ///   Reader for members of objects and record. In a custom serializer can
+    ///   be used to process the **same** object or record
+    /// </summary>
+    procedure ReadMembers(AType: TRttiType; AInstance: Pointer; AJSONObject: TJSONObject);
+
+    /// <summary>
+    ///   Useful method to add deserialization errors in the deserializer's log
+    /// </summary>
+    procedure LogError(const AMessage: string);
+
+    /// <summary>
+    ///   Tells whether AValue is the instance the caller passed to the entry
+    ///   point (JSONToObject/JSONToTValue). Such an instance cannot be replaced
+    ///   by a serializer - there is no reference to update, and the caller owns
+    ///   it - so a serializer that would otherwise return a new instance has to
+    ///   read into this one instead
+    /// </summary>
+    function IsOriginalInstance(const AValue: TValue): Boolean;
+  end;
+
+  //TCustomItemCreator = reference to function (AType: TRttiType; AValue: TJSONValue): TObject;
+
+  /// <summary>
+  ///   Base class for an Object Factory
+  /// </summary>
+  TCustomFactory = class abstract(TObject)
+  public
+    function Build(const AType: TRttiType; AValue: TJSONValue): TObject; virtual; abstract;
+  end;
+  TNeonFactoryRegistry = class(TList<TCustomFactoryClass>);
+
+  /// <summary>
+  ///   Base class for a Custom Serializer
+  /// </summary>
+  TCustomSerializer = class abstract(TObject)
+  protected
+    class function GetTargetInfo: PTypeInfo; virtual;
+    class function CanHandle(AType: PTypeInfo): Boolean; virtual; abstract;
+  protected
+    class function ClassDistance: Integer;
+    class function ClassIs(AClass: TClass): Boolean;
+    class function TypeInfoIs(AInfo: PTypeInfo): Boolean;
+    class function TypeInfoIsClass(AInfo: PTypeInfo): Boolean;
+  public
+    class procedure ChangeConfig(AConfig: INeonConfiguration); virtual;
+
+    /// <summary>
+    ///   Writes AValue as JSON. Called for every value whose type this
+    ///   serializer claims through CanHandle, wherever it appears: a member, an
+    ///   array or list item, a dictionary key or value, a top-level value.
+    /// </summary>
+    /// <remarks>
+    ///   The result belongs to the engine: it is added to the JSON tree and
+    ///   freed with it. Return nil to write nothing at all - the member is then
+    ///   left out of the JSON object entirely, which is how the IncludeIf
+    ///   policies are honoured; read ANeonObject.NeonInclude to apply them.
+    /// </remarks>
+    /// <remarks>
+    ///   AValue never holds a nil object: the engine applies the member's
+    ///   IncludeIf first (omitted under the default NotNull, JSON null under
+    ///   Always), so a serializer never has to guard against one.
+    /// </remarks>
+    /// <remarks>
+    ///   ANeonObject carries the resolved Neon attributes of what is being
+    ///   written (NeonInclude, NeonRawValue, NeonEnumNames, ...). AContext
+    ///   recurses back into the engine - WriteDataMember for a value,
+    ///   WriteMembers for the members of an object or record - and logs errors,
+    ///   which is how a serializer reuses the engine instead of restating it.
+    /// </remarks>
+    function Serialize(const AValue: TValue; ANeonObject: TNeonRttiObject; AContext: ISerializerContext): TJSONValue; virtual; abstract;
+
+    /// <summary>
+    ///   Reads AValue (the JSON) and returns the value the target must be set
+    ///   to. Called wherever a value of a type this serializer claims through
+    ///   CanHandle is read.
+    /// </summary>
+    /// <remarks>
+    ///   AData is what the target holds right now: for a class, the instance to
+    ///   read into, already built by AutoCreate, [NeonAutoCreate] or a factory
+    ///   when one of them applies. Return AData once it has been filled in
+    ///   place, or a different value to replace it - in which case disposing of
+    ///   the instance being replaced is the serializer's job, nothing else will
+    ///   do it. Do not replace the instance AContext.IsOriginalInstance
+    ///   recognises: it belongs to the caller and the result is discarded there.
+    /// </remarks>
+    /// <remarks>
+    ///   A class target with no instance (no AutoCreate, no factory, no
+    ///   parameterless constructor) is skipped and logged before it gets here,
+    ///   unless NeedsInstance is overridden to return False - a serializer that
+    ///   builds the value itself is called with nothing and returns the new
+    ///   value.
+    /// </remarks>
+    /// <remarks>
+    ///   AValue can be a TJSONNull: a null reaches the serializer so it can
+    ///   decide what "no value" means for its type. The returned TValue has to
+    ///   fit the target's declared type - the engine assigns it as it is.
+    /// </remarks>
+    function Deserialize(AValue: TJSONValue; const AData: TValue; ANeonObject: TNeonRttiObject; AContext: IDeserializerContext): TValue; virtual; abstract;
+
+    /// <summary>
+    ///   Optional hook for the JSON Schema generator: return the JSON Schema (a
+    ///   TJSONObject) describing the JSON this serializer writes for AType, or
+    ///   nil (the default) to let the generator fall back to its structural
+    ///   type inference. Never called during serialization/deserialization.
+    ///   Returning nil is always safe, so existing serializers that do not
+    ///   override this method keep their previous behaviour unchanged.
+    /// </summary>
+    function SerializeSchema(AType: TRttiType; ANeonObject: TNeonRttiObject): TJSONObject; virtual;
+
+    /// <summary>
+    ///   True (the default) when Deserialize needs the instance it is given: a
+    ///   member with no instance - no AutoCreate, no factory, no parameterless
+    ///   constructor - is then skipped and logged instead of handing the
+    ///   serializer a nil to dereference. A serializer that builds the value
+    ///   itself, and can therefore be called with nothing, returns False.
+    /// </summary>
+    class function NeedsInstance: Boolean; virtual;
+
+  end;
+
+  TNeonSerializerRegistry = class
+  private type
+    TSerializerInfo = record
+    public
+      SerializerClass: TCustomSerializerClass;
+      Distance: Integer;
+    public
+      class function FromSerializer(ASerializerClass: TCustomSerializerClass): TSerializerInfo; static;
+    end;
+  private type
+    SerializerCacheRegistry = class(TObjectDictionary<PTypeInfo, TCustomSerializer>);
+    SerializerClassRegistry = class(TList<TSerializerInfo>);
+    SerializerInstanceRegistry = class(TObjectDictionary<TClass, TCustomSerializer>);
+  private
+    FRegistryClass: SerializerClassRegistry;
+    FRegistryCache: SerializerCacheRegistry;
+    FRegistryCacheLock: TCriticalSection;
+    FInstanceCache: SerializerInstanceRegistry;
+    function GetCount: Integer;
+
+    function InternalGetSerializer(ATypeInfo: PTypeInfo): TCustomSerializer;
+  public
+    constructor Create;
+    destructor Destroy; override;
+  public
+    procedure Clear;
+    procedure ClearCache;
+    procedure Assign(ARegistry: TNeonSerializerRegistry);
+
+    function RegisterSerializer(ASerializerClass: TCustomSerializerClass): TNeonSerializerRegistry; overload;
+    procedure UnregisterSerializer(ASerializerClass: TCustomSerializerClass);
+
+    function GetSerializer<T>: TCustomSerializer; overload;
+    function GetSerializer(AValue: TValue): TCustomSerializer; overload;
+    function GetSerializer(ATargetClass: TClass): TCustomSerializer; overload;
+    function GetSerializer(ATargetInfo: PTypeInfo): TCustomSerializer; overload;
+
+    /// <summary>
+    ///   The instance of a serializer named explicitly ([NeonSerialize]/
+    ///   [NeonDeserialize]) rather than resolved by type: the class need not be
+    ///   registered, and one instance per class is created and kept by the
+    ///   registry
+    /// </summary>
+    function GetSerializerInstance(ASerializerClass: TCustomSerializerClass): TCustomSerializer;
+  public
+    property Count: Integer read GetCount;
+  end;
+  
+  {$ENDREGION}
+
+  {$REGION 'Neon Configuration'}
+  
+  INeonConfigurationType = interface
+  ['{E9E85E1D-329C-4ED4-895C-D4DA8021A4C5}']
+//    function SetMembers(AValue: TNeonMembersSet): INeonConfigurationType;
+//    function SetMemberSort(AValue: TNeonSort): INeonConfigurationType;
+//    function SetMemberCase(AValue: TNeonCase): INeonConfigurationType;
+//    function SetMemberCustomCase(AValue: TCaseFunc): INeonConfigurationType;
+//    function SetVisibility(AValue: TNeonVisibility): INeonConfigurationType;
+//    function SetIgnoreFieldPrefix(AValue: Boolean): INeonConfigurationType;
+//    function SetEnumAsInt(AValue: Boolean): INeonConfigurationType;
+//    function SetAutoCreate(AValue: Boolean): INeonConfigurationType;
+    function SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType; overload;
+    function AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType; overload;
+
+    function ApplyConfig: INeonConfiguration;
+  end;
+
+  TConfigPair = TPair<TRttiType, INeonConfigurationType>;
+
+  /// <summary>
+  ///   Utility class to provide generic functions to the main configuration
+  /// </summary>
+  TTypeConfigurator = class
+  private
+    [unsafe]FGlobalConfig: INeonConfiguration;
+    FTypeConfigs: TList<TConfigPair>;
+
+    function CreateConfigForType(AType: TRttiType): INeonConfigurationType;
+    function GetConfigForType(AType: TRttiType): INeonConfigurationType;
+    function IgnoreClass(AType: TRttiInstanceType; const AMember: string): Boolean;
+    function IgnoreRecord(AType: TRttiRecordType; const AMember: string): Boolean;
+
+    function Rules<T>: INeonConfigurationType;
+  public
+    constructor Create(AConfig: INeonConfiguration);
+    destructor Destroy; override;
+
+    function ForClass<T: class>: INeonConfigurationType;
+    function ForRecord<T: record>: INeonConfigurationType;
+  end;
+
+  INeonConfiguration = interface
+  ['{F82AB790-1C65-4501-915C-0289EFD9D8CC}']
+    // Member-related settings
+    function SetMembers(AValue: TNeonMembersSet): INeonConfiguration;
+    function SetMemberSort(AValue: TNeonSort): INeonConfiguration;
+    function SetMapSort(AValue: TNeonSort): INeonConfiguration;
+
+    /// <summary>
+    ///   How a JSON name is shaped from a Delphi name: PascalCase (unchanged),
+    ///   LowerCase, UpperCase, CamelCase, SnakeCase, KebabCase or
+    ///   ScreamingSnakeCase
+    /// </summary>
+    /// <remarks>
+    ///   It shapes the JSON name of a member and the text of an enum value
+    ///   alike, so (Admin, Guest) is written "admin"/"guest" under LowerCase or
+    ///   CamelCase and VeryHighSpeed splits under SnakeCase. An explicit
+    ///   [NeonEnumNames] name is used verbatim and wins over the case, the way
+    ///   [NeonProperty] wins for a member name. Like the other settings that
+    ///   feed the name plans, a change takes effect from the next top-level
+    ///   call
+    /// </remarks>
+    function SetMemberCase(AValue: TNeonCase): INeonConfiguration;
+    function SetMemberCustomCase(AValue: TCaseFunc): INeonConfiguration;
+    function SetVisibility(AValue: TNeonVisibility): INeonConfiguration;
+
+    /// <summary>
+    ///   Drops the leading letter of every private or protected <b>field</b>
+    ///   whose name starts with an F, so the FFirstName convention produces
+    ///   FirstName (first_name, first-name...) instead of FFirstName
+    /// </summary>
+    /// <remarks>
+    ///   <para>
+    ///     <b>It requires the convention.</b> The first character is removed
+    ///     from any private/protected field name beginning with F or f -
+    ///     nothing checks that what follows looks like a prefixed name - so a
+    ///     field that does not follow it loses its first letter: Formula
+    ///     becomes ormula and firstName becomes irstName. Public and published
+    ///     fields are never touched
+    ///   </para>
+    ///   <para>
+    ///     Applies to fields only (a property named FirstName keeps its name),
+    ///     and only when fields are serialized at all - see SetMembers. It is
+    ///     off by default, but <b>TNeonConfiguration.Snake and .ScreamingSnake
+    ///     turn it on</b>. [NeonProperty] overrides it for a single member
+    ///   </para>
+    /// </remarks>
+    function SetIgnoreFieldPrefix(AValue: Boolean): INeonConfiguration;
+    function SetIgnoreReadOnlyProps(AValue: Boolean): INeonConfiguration;
+    function SetEnumAsInt(AValue: Boolean): INeonConfiguration;
+    function SetAutoCreate(AValue: Boolean): INeonConfiguration;
+    function SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration;
+    function AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration; overload;
+
+    // Global Settings
+    function SetStrictTypes(AValue: Boolean): INeonConfiguration;
+    function SetUseUTCDate(AValue: Boolean): INeonConfiguration;
+    function SetRaiseExceptions(AValue: Boolean): INeonConfiguration;
+    function SetOnError(AValue: TNeonErrorCallback): INeonConfiguration;
+    function SetPrettyPrint(AValue: Boolean): INeonConfiguration;
+    function SetClosedSchema(AValue: Boolean): INeonConfiguration;
+
+    /// <summary>
+    ///   Omits, when serializing, a member that points back to an instance
+    ///   still being written: a self reference (Exception.BaseException), a
+    ///   child's back reference to its parent, any cycle in the graph
+    /// </summary>
+    /// <remarks>
+    ///   On by default. The check follows the serialization path, not every
+    ///   instance already written, so the same instance reached twice on
+    ///   sibling members is still written twice. Turned off, a cycle recurses
+    ///   until the stack gives out: do it only for graphs known to be acyclic,
+    ///   to save the (small) cost of the check
+    /// </remarks>
+    function SetIgnoreCircularRefs(AValue: Boolean): INeonConfiguration;
+
+    /// <summary>
+    ///   Registers a custom serializer for this configuration, whose registry
+    ///   starts empty - the serializers bundled with Neon included
+    /// </summary>
+    /// <remarks>
+    ///   This is the registration path to use: it is the one that runs the
+    ///   serializer's ChangeConfig hook. Adding a class straight to
+    ///   GetSerializers (as the Register*Serializers helpers in the serializer
+    ///   units do) skips that hook, which for TCollectionSerializer means the
+    ///   TCollectionItem.Collection back-reference is never ignored and
+    ///   serializing a TCollection recurses until the stack gives out
+    /// </remarks>
+    function RegisterSerializer(AClass: TCustomSerializerClass): INeonConfiguration;
+    function RegisterFactory(AClass: TCustomFactoryClass): INeonConfiguration;
+
+    function GetPrettyPrint: Boolean;
+    function GetUseUTCDate: Boolean;
+    function GetRaiseExceptions: Boolean;
+    function GetOnError: TNeonErrorCallback;
+    function GetSerializers: TNeonSerializerRegistry;
+    function GetTypeConfigurator: TTypeConfigurator;
+
+    property Rules: TTypeConfigurator read GetTypeConfigurator;
+  end;
+
+  /// <summary>
+  ///   The word-case conversions behind TNeonCase, applied to a member name to
+  ///   produce its JSON name
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     <b>Consecutive capitals are one word.</b> The Pascal-to-snake/kebab
+  ///     conversions split before a capital that starts a new capitalized word,
+  ///     so a run of capitals - an acronym - is never split:
+  ///   </para>
+  ///   <code>
+  ///     FirstName    -> first_name     first-name
+  ///     HTTPResponse -> httpresponse   httpresponse   (not http_response)
+  ///     IPAddress    -> ipaddress      ipaddress
+  ///     MyURLValue   -> my_urlvalue    my-urlvalue
+  ///     UserID       -> user_id        user-id        (a trailing run of 2+ splits)
+  ///     ValueX       -> valuex         valuex         (a trailing single capital does not)
+  ///   </code>
+  ///   <para>
+  ///     This is symmetric inside Neon - a member's JSON name is computed the
+  ///     same way when writing and when reading, so a Neon-to-Neon round trip
+  ///     matches - but it does not match a producer that spells the same field
+  ///     http_response. Give such a member the name the document uses with
+  ///     [NeonProperty('http_response')], which wins over the case conversion.
+  ///     Note also that names differing only in the capitalization of a run
+  ///     (ID and Id) converge on the same JSON name, and Neon does not check
+  ///     for collisions
+  ///   </para>
+  /// </remarks>
+  TCaseAlgorithm = class
+  public
+    /// <summary>
+    ///   Lowercases the first character only: HTTPResponse -> hTTPResponse
+    /// </summary>
+    class function PascalToCamel(const AString: string): string;
+    class function CamelToPascal(const AString: string): string;
+
+    /// <summary>
+    ///   Underscores between words, all lowercase. Acronyms are one word - see
+    ///   the remarks on TCaseAlgorithm
+    /// </summary>
+    class function PascalToSnake(const AString: string): string;
+    class function PascalToScreamingSnake(const AString: string): string;
+
+    /// <summary>
+    ///   Capitalizes each underscore-separated word. Not an exact inverse of
+    ///   PascalToSnake: the case of a run of capitals is lost on the way out
+    ///   and cannot be restored - user_id comes back as UserId, not UserID
+    /// </summary>
+    class function SnakeToPascal(const AString: string): string;
+
+    /// <summary>
+    ///   Hyphens between words, all lowercase. Acronyms are one word - see the
+    ///   remarks on TCaseAlgorithm
+    /// </summary>
+    class function PascalToKebab(const AString: string): string;
+    /// <summary>
+    ///   Capitalizes each hyphen-separated word, with the same caveat as
+    ///   SnakeToPascal
+    /// </summary>
+    class function KebabToPascal(const AString: string): string;
+
+    class function ConvertCase(const AName: string; ACase: TNeonCase; ACaseFunc: TCaseFunc): string;
+  end;
+
+  /// <summary>
+  ///   Per-type configuration class
+  /// </summary>
+  TNeonConfigurationType = class sealed(TInterfacedObject, INeonConfigurationType)
+  private
+    [unsafe]FGlobalConfig: INeonConfiguration;
+    FIgnoreMembers: TArray<string>;
+
+    function IgnoreMember(const AMember: string): Boolean;
+
+    /// <summary>
+    ///   The rules here are read while the member plans are built, so changing
+    ///   them has to invalidate what the configuration cached - a caller that
+    ///   keeps this interface and adds a rule after a first call would
+    ///   otherwise see it ignored
+    /// </summary>
+    procedure InvalidateGlobalConfig;
+  public
+    // Interface INeonConfigurationType
+    function SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType; overload;
+    function AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType; overload;
+    function ApplyConfig: INeonConfiguration;
+
+    function SetGlobalConfig(AConfig: INeonConfiguration): INeonConfigurationType;
+  end;
+
+  /// <summary>
+  ///   Main configuration class for TNeon engine
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     Every constructor - Create, Default, Camel, Snake, Kebab, Pretty,
+  ///     ScreamingSnake - starts with an <b>empty serializer registry</b>: the
+  ///     serializers Neon ships with (Neon.Core.Serializers.RTL, .DB, .VCL,
+  ///     .Nullables) are not registered for you, and a type that has one but is
+  ///     not registered falls back to the generic RTTI handling - a TGUID is
+  ///     written as its D1/D2/D3 fields, a TCollection as its own Count and
+  ///     Capacity with the items lost. See RegisterSerializer and the
+  ///     "Custom Serializers" section of the README
+  ///   </para>
+  ///   <para>
+  ///     A configuration is mutable, and changing one is safe at any time. The
+  ///     settings read while (de)serializing - UseUTCDate, EnumAsInt,
+  ///     AutoCreate, StrictTypes, MapSort, PrettyPrint, RaiseExceptions,
+  ///     OnError, ClosedSchema, IgnoreCircularRefs - take effect immediately; the ones that feed
+  ///     the member plans - member set, sort, case, visibility, field prefix,
+  ///     read-only properties, the ignore lists and the per-type Rules -
+  ///     invalidate what was cached and take effect from the next top-level
+  ///     call, because a call already in flight keeps the member plans it
+  ///     started with (see ClearRttiCache). Changing a configuration in the
+  ///     middle of a call that uses it is still not something to do - a name
+  ///     not computed yet is computed from the new settings, so one document
+  ///     can come out with two naming conventions - but it can no longer
+  ///     corrupt memory or silently drop the members after it
+  ///   </para>
+  /// </remarks>
+  TNeonConfiguration = class sealed(TInterfacedObject, INeonConfiguration)
+  private
+    FVisibility: TNeonVisibility;
+    FMembers: TNeonMembersSet;
+    FMemberSort: TNeonSort;
+    FMapSort: TNeonSort;
+    FMemberCase: TNeonCase;
+    FMemberCustomCase: TCaseFunc;
+    FIgnoreFieldPrefix: Boolean;
+    FIgnoreReadOnlyProps: Boolean;	
+    FUseUTCDate: Boolean;
+    FPrettyPrint: Boolean;
+    FSerializers: TNeonSerializerRegistry;
+    FRaiseExceptions: Boolean;
+    FOnError: TNeonErrorCallback;
+    FEnumAsInt: Boolean;
+    FAutoCreate: Boolean;
+    FStrictTypes: Boolean;
+    FClosedSchema: Boolean;
+    FIgnoreCircularRefs: Boolean;
+    FFactoryList: TNeonFactoryRegistry;
+    FIgnoreMembers: TArray<string>;
+
+    FTypeConfigurator: TTypeConfigurator;
+
+    FRttiCaches: TDictionary<UInt64, INeonRttiCache>;
+    FRttiCachesLock: TCriticalSection;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function IgnoreMember(AType: TRttiType; const AMember: string): Boolean;
+
+    class function Default: INeonConfiguration; static;
+    class function Pretty: INeonConfiguration; static;
+    /// <summary>
+    ///   snake_case names, and IgnoreFieldPrefix <b>on</b> - which requires the
+    ///   F convention from every private/protected field, see
+    ///   SetIgnoreFieldPrefix
+    /// </summary>
+    class function Snake: INeonConfiguration; static;
+    class function Camel: INeonConfiguration; static;
+    class function Kebab: INeonConfiguration; static;
+    /// <summary>
+    ///   SCREAMING_SNAKE_CASE names, and IgnoreFieldPrefix <b>on</b> - same
+    ///   requirement as Snake
+    /// </summary>
+    class function ScreamingSnake: INeonConfiguration; static;
+
+    function SetMembers(AValue: TNeonMembersSet): INeonConfiguration;
+    function SetMemberSort(AValue: TNeonSort): INeonConfiguration;
+    function SetMapSort(AValue: TNeonSort): INeonConfiguration;
+    function SetMemberCase(AValue: TNeonCase): INeonConfiguration;
+    function SetMemberCustomCase(AValue: TCaseFunc): INeonConfiguration;
+    function SetVisibility(AValue: TNeonVisibility): INeonConfiguration;
+    function SetIgnoreFieldPrefix(AValue: Boolean): INeonConfiguration;
+    function SetIgnoreReadOnlyProps(AValue: Boolean): INeonConfiguration;
+    function SetUseUTCDate(AValue: Boolean): INeonConfiguration;
+    function SetRaiseExceptions(AValue: Boolean): INeonConfiguration;
+    function SetOnError(AValue: TNeonErrorCallback): INeonConfiguration;
+    function SetPrettyPrint(AValue: Boolean): INeonConfiguration;
+    function SetClosedSchema(AValue: Boolean): INeonConfiguration;
+    function SetEnumAsInt(AValue: Boolean): INeonConfiguration;
+    function SetAutoCreate(AValue: Boolean): INeonConfiguration;
+    function SetStrictTypes(AValue: Boolean): INeonConfiguration;
+    function SetIgnoreCircularRefs(AValue: Boolean): INeonConfiguration;
+    function SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration;
+    function AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration; overload;
+    function RegisterSerializer(AClass: TCustomSerializerClass): INeonConfiguration;
+    function RegisterFactory(AClass: TCustomFactoryClass): INeonConfiguration;
+
+    function GetUseUTCDate: Boolean;
+    function GetPrettyPrint: Boolean;
+    function GetRaiseExceptions: Boolean;
+    function GetOnError: TNeonErrorCallback;
+    function GetSerializers: TNeonSerializerRegistry;
+    function GetFactoryList: TNeonFactoryRegistry;
+    function GetTypeConfigurator: TTypeConfigurator;
+
+    /// <summary>
+    ///   The RTTI work accumulated for this configuration, for the calling
+    ///   thread and the given operation. Serializers take theirs from here
+    ///   instead of starting empty, so a type is enumerated and its attributes
+    ///   parsed once per configuration rather than once per top-level call
+    /// </summary>
+    function GetRttiCache(AOperation: TNeonOperation): INeonRttiCache;
+
+    /// <summary>
+    ///   Detaches what was cached from the current settings, so the next call
+    ///   builds it again
+    /// </summary>
+    /// <remarks>
+    ///   Called by every setter that feeds the member plans, and by the
+    ///   type-level rules. The caches are reference counted, so this drops the
+    ///   configuration's reference and nothing else: a serialization already in
+    ///   flight - on this thread, through a custom serializer that touches the
+    ///   configuration, or on another thread entirely - holds its own reference
+    ///   and finishes on the member plans it started with, rather than reading
+    ///   memory this call would otherwise have freed under it
+    /// </remarks>
+    procedure ClearRttiCache;
+
+    property Members: TNeonMembersSet read FMembers write FMembers;
+    property MemberSort: TNeonSort read FMemberSort write FMemberSort;
+    property MapSort: TNeonSort read FMapSort write FMapSort;
+    property MemberCase: TNeonCase read FMemberCase write FMemberCase;
+    property MemberCustomCase: TCaseFunc read FMemberCustomCase write FMemberCustomCase;
+    property Visibility: TNeonVisibility read FVisibility write FVisibility;
+    property IgnoreFieldPrefix: Boolean read FIgnoreFieldPrefix write FIgnoreFieldPrefix;
+    property IgnoreReadOnlyProps: Boolean read FIgnoreReadOnlyProps write FIgnoreReadOnlyProps;
+    property UseUTCDate: Boolean read FUseUTCDate write FUseUTCDate;
+    property RaiseExceptions: Boolean read FRaiseExceptions write FRaiseExceptions;
+    property OnError: TNeonErrorCallback read FOnError write FOnError;
+    property EnumAsInt: Boolean read FEnumAsInt write FEnumAsInt;
+    property AutoCreate: Boolean read FAutoCreate write FAutoCreate;
+    property StrictTypes: Boolean read FStrictTypes write FStrictTypes;
+    property ClosedSchema: Boolean read FClosedSchema write FClosedSchema;
+    property IgnoreCircularRefs: Boolean read FIgnoreCircularRefs write FIgnoreCircularRefs;
+
+    property Serializers: TNeonSerializerRegistry read FSerializers write FSerializers;
+    property FactoryList: TNeonFactoryRegistry read FFactoryList write FFactoryList;
+  end;
+  {$ENDREGION}
+
+  {$REGION 'Rtti Proxies'}
+
+  /// <summary>
+  ///   Which kind of member a [NeonGetter]/[NeonSetter] redirects to
+  /// </summary>
+  TNeonAccessorKind = (None, Field, Prop, Method);
+
+  /// <summary>
+  ///   The member a [NeonGetter]/[NeonSetter] makes the engine read or write
+  ///   in place of the annotated one. Resolved, and checked to be of the same
+  ///   type as the annotated member, once per member while its attributes are
+  ///   parsed, so that reading and writing stay a plain RTTI call
+  /// </summary>
+  TNeonMemberAccessor = record
+    Kind: TNeonAccessorKind;
+    Field: TRttiField;
+    Prop: TRttiProperty;
+    Method: TRttiMethod;
+
+    /// <summary>
+    ///   True if a NeonGetter/NeonSetter named a member to go through
+    /// </summary>
+    function Assigned: Boolean;
+  end;
+
+  TNeonRttiObject = class
+  private
+    FNeonFactoryClass: TCustomFactoryClass;
+    FNeonItemFactoryClass: TCustomFactoryClass;
+    FTypeAttributes: TArray<TCustomAttribute>;
+    FNeonAutoCreate: Boolean;
+  protected
+    FOperation: TNeonOperation;
+    FRttiObject: TRttiObject;
+    FNeonInclude: TIncludeValue;
+    FAttributes: TArray<TCustomAttribute>;
+    FNeonMembers: TNeonMembersSet;
+    FNeonVisibility: TNeonVisibility;
+    FNeonIgnore: Boolean;
+    FNeonProperty: string;
+    FNeonEnumNames: TArray<string>;
+    FNeonSerializerName: string;
+    FNeonSerializerClass: TCustomSerializerClass;
+    FNeonRawValue: Boolean;
+    FNeonUnwrapped: Boolean;
+    FNeonSingleOrArray: Boolean;
+  protected
+    procedure InternalParseAttributes(const AAttr: TArray<TCustomAttribute>); virtual;
+    procedure ProcessAttribute(AAttribute: TCustomAttribute); virtual;
+
+  public
+    constructor Create(ARttiObject: TRttiObject; AOperation: TNeonOperation);
+    function AsRttiType: TRttiType;
+  public
+    procedure ParseAttributes; virtual;
+    function GetAttribute<T: TCustomAttribute>: T;
+
+    property Attributes: TArray<TCustomAttribute> read FAttributes write FAttributes;
+    property TypeAttributes: TArray<TCustomAttribute> read FTypeAttributes write FTypeAttributes;
+    // Neon-based properties
+    property NeonIgnore: Boolean read FNeonIgnore write FNeonIgnore;
+    property NeonRawValue: Boolean read FNeonRawValue write FNeonRawValue;
+    property NeonInclude: TIncludeValue read FNeonInclude write FNeonInclude;
+    property NeonSerializerName: string read FNeonSerializerName write FNeonSerializerName;
+    property NeonSerializerClass: TCustomSerializerClass read FNeonSerializerClass write FNeonSerializerClass;
+    property NeonProperty: string read FNeonProperty write FNeonProperty;
+    property NeonEnumNames: TArray<string> read FNeonEnumNames write FNeonEnumNames;
+    property NeonMembers: TNeonMembersSet read FNeonMembers write FNeonMembers;
+    property NeonVisibility: TNeonVisibility read FNeonVisibility write FNeonVisibility;
+    property NeonUnwrapped: Boolean read FNeonUnwrapped write FNeonUnwrapped;
+    property NeonSingleOrArray: Boolean read FNeonSingleOrArray write FNeonSingleOrArray;
+    property NeonAutoCreate: Boolean read FNeonAutoCreate write FNeonAutoCreate;
+    property NeonFactoryClass: TCustomFactoryClass read FNeonFactoryClass write FNeonFactoryClass;
+    property NeonItemFactoryClass: TCustomFactoryClass read FNeonItemFactoryClass write FNeonItemFactoryClass;
+  end;
+
+  TNeonRttiType = class(TNeonRttiObject)
+  private
+    FType: TRttiType;
+  public
+    constructor Create(AType: TRttiType; AOperation: TNeonOperation);
+  end;
+
+  TNeonRttiMember = class(TNeonRttiObject)
+  private
+    FMemberType: TNeonMemberType;
+    FMemberRttiType: TRttiType;
+    FMember: TRttiMember;
+    FParent: TNeonRttiType;
+    FSerializable: Boolean;
+    FStaticSerializable: Boolean;
+    FJSONName: string;
+    FJSONNameCached: Boolean;
+    FMethodIf: TRttiMethod;
+    FMethodIfContext: TNeonIgnoreIfContext;
+    FNeonGetter: TNeonMemberAccessor;
+    FNeonSetter: TNeonMemberAccessor;
+    function MemberAsProperty: TRttiProperty; inline;
+    function MemberAsField: TRttiField; inline;
+    function GetName: string;
+
+    /// <summary>
+    ///   Looks up the member a [NeonGetter]/[NeonSetter] names (as a field, a
+    ///   property or a method, whichever carries that name) in the type
+    ///   owning this one, and checks that it can stand in for it: same type,
+    ///   readable (AWriting False) or writable (AWriting True). Every failure
+    ///   is an error in the attribute itself, so it raises rather than leaving
+    ///   the member silently reading/writing itself
+    /// </summary>
+    function ResolveAccessor(AAttribute: NeonGetterAttribute; AWriting: Boolean): TNeonMemberAccessor;
+
+    function AccessorGetValue(const AAccessor: TNeonMemberAccessor; AInstance: Pointer): TValue;
+    procedure AccessorSetValue(const AAccessor: TNeonMemberAccessor; const AValue: TValue; AInstance: Pointer);
+
+    // Instance-based methods
+    function EvalIncludeIf(AInstance: Pointer): TNeonIncludeOption;
+  protected
+    procedure ProcessAttribute(AAttribute: TCustomAttribute); override;
+
+    /// <summary>
+    ///   True if a [NeonInclude(IncludeIf.CustomFunction)] method must be
+    ///   invoked on every instance to decide whether this member is
+    ///   serializable. When False the decision is purely type-based and is
+    ///   computed once by TNeonRttiMembers.Prepare.
+    /// </summary>
+    function HasIncludeIf: Boolean; inline;
+
+    /// <summary>
+    ///   Serialized (JSON) name of the member, as computed by
+    ///   TNeonBase.GetNameFromMember. Both of its inputs (the member and the
+    ///   configuration) are fixed for the lifetime of the serializer, so the
+    ///   (allocating) case conversion is done once per member instead of once
+    ///   per object. Returns False until SetJSONName has been called.
+    /// </summary>
+    function TryGetJSONName(out AName: string): Boolean; inline;
+    procedure SetJSONName(const AValue: string);
+
+    /// <summary>
+    ///   Type-level part of the serializable decision (visibility, member
+    ///   choice, ignore lists, readability/writability). Used as the fallback
+    ///   when a per-instance IncludeIf function cannot decide.
+    /// </summary>
+    property StaticSerializable: Boolean read FStaticSerializable write FStaticSerializable;
+  public
+    constructor Create(AMember: TRttiMember; AParent: TNeonRttiType; AOperation: TNeonOperation);
+
+    // Instance-based methods
+    function GetValue(AInstance: Pointer): TValue;
+    procedure SetValue(const AValue: TValue; AInstance: Pointer);
+
+    function RttiType: TRttiType;
+    function MemberType: TNeonMemberType;
+    function IsWritable: Boolean;
+    function IsReadable: Boolean;
+    function TypeKind: TTypeKind;
+    function Visibility: TMemberVisibility;
+    function IsField: Boolean;
+    function IsProperty: Boolean;
+
+    property Name: string read GetName;
+    property Serializable: Boolean read FSerializable write FSerializable;
+
+    /// <summary>
+    ///   The member [NeonGetter] reads this one through, if any
+    /// </summary>
+    property NeonGetter: TNeonMemberAccessor read FNeonGetter;
+
+    /// <summary>
+    ///   The member [NeonSetter] writes this one through, if any
+    /// </summary>
+    property NeonSetter: TNeonMemberAccessor read FNeonSetter;
+  end;
+
+  TNeonRttiMembers = class(TObjectList<TNeonRttiMember>)
+  private
+    FOperation: TNeonOperation;
+    FConfig: TNeonConfiguration;
+    FParent: TNeonRttiType;
+    FPrepared: Boolean;
+    FHasInstanceChecks: Boolean;
+  private
+    function IgnoredName(const AName: string): Boolean; inline;
+    function MatchesVisibility(AVisibility: TMemberVisibility): Boolean;
+    function MatchesMemberChoice(AMemberType: TNeonMemberType): Boolean;
+
+    /// <summary>
+    ///   Resolves, once per type, every part of the serializable decision that
+    ///   does not depend on the instance being processed, storing it in each
+    ///   member's Serializable/StaticSerializable. Works on FOperation, which
+    ///   is fixed when the list is built.
+    /// </summary>
+    procedure Prepare;
+  public
+    constructor Create(AConfig: TNeonConfiguration; AType: TRttiType; AOperation: TNeonOperation);
+    destructor Destroy; override;
+
+    function NewMember(AMember: TRttiMember): TNeonRttiMember;
+
+    procedure FilterSerialize(AInstance: Pointer);
+    procedure FilterDeserialize(AInstance: Pointer);
+  end;
+
+  TMemberRegistry = class(TObjectDictionary<PTypeInfo, TNeonRttiMembers>);
+
+  /// <summary>
+  ///   Per-type cache of parsed TNeonRttiObject values, the type-level twin of
+  ///   TMemberRegistry
+  /// </summary>
+  TNeonObjectRegistry = class(TObjectDictionary<PTypeInfo, TNeonRttiObject>);
+
+  /// <summary>
+  ///   Per-class cache of the structural probe: whether a class is a map, a
+  ///   list, a streamable or a plain object. Keyed by TClass, not by PTypeInfo,
+  ///   because the probes read the metaclass of the actual instance
+  /// </summary>
+  TDynamicKindRegistry = class(TDictionary<TClass, TNeonDynamicKind>);
+
+  /// <summary>
+  ///   Everything a serializer or deserializer resolves per type: the member
+  ///   lists and the parsed type objects
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     Held by the configuration and handed out per thread and per operation,
+  ///     so repeated top-level calls reuse it instead of rebuilding it. It is
+  ///     deliberately not shared between threads: TNeonRttiMembers carries
+  ///     per-instance state (FilterSerialize writes each member's Serializable)
+  ///     and TNeonRttiMember fills its JSON name lazily, so one thread must
+  ///     never see another's entries
+  ///   </para>
+  ///   <para>
+  ///     Reference counted on purpose. A serializer takes its cache once and
+  ///     holds that reference for the whole call, so a setter that invalidates
+  ///     the configuration mid-traversal only detaches the cache from the
+  ///     configuration - the call in flight finishes on the plans it started
+  ///     with instead of reading freed memory, and the next call builds fresh
+  ///     ones
+  ///   </para>
+  /// </remarks>
+  INeonRttiCache = interface
+  ['{6F1B2C84-9D3E-4A75-8C21-0B7E5A4D9F13}']
+    function GetMembers: TMemberRegistry;
+    function GetObjects: TNeonObjectRegistry;
+    function GetDynamicKinds: TDynamicKindRegistry;
+
+    property Members: TMemberRegistry read GetMembers;
+    property Objects: TNeonObjectRegistry read GetObjects;
+    property DynamicKinds: TDynamicKindRegistry read GetDynamicKinds;
+  end;
+
+  TNeonRttiCache = class(TInterfacedObject, INeonRttiCache)
+  private
+    FMembers: TMemberRegistry;
+    FObjects: TNeonObjectRegistry;
+    FDynamicKinds: TDynamicKindRegistry;
+
+    function GetMembers: TMemberRegistry;
+    function GetObjects: TNeonObjectRegistry;
+    function GetDynamicKinds: TDynamicKindRegistry;
+  public
+    constructor Create;
+    destructor Destroy; override;
+
+    property Members: TMemberRegistry read FMembers;
+    property Objects: TNeonObjectRegistry read FObjects;
+    property DynamicKinds: TDynamicKindRegistry read FDynamicKinds;
+  end;
+  
+  {$ENDREGION}
+
+  {$REGION 'Neon Base Class'}
+
+  {$IFDEF HAS_NO_REF_COUNT}
+  TNeonBase = class(TNoRefCountObject, IConfigurationContext)
+  {$ELSE}
+  TNeonBase = class(TSingletonImplementation, IConfigurationContext)
+  {$ENDIF}
+  protected
+    FConfig: TNeonConfiguration;
+    FConfigIntf: INeonConfiguration;
+    FOperation: TNeonOperation;
+    FOriginalInstance: TValue;
+    FRttiCache: INeonRttiCache;
+    FErrors: TStrings;
+    function GetTypeMembers(AType: TRttiType): TArray<TRttiMember>;
+
+    /// <summary>
+    ///   The configuration's cache for this thread and operation, fetched on
+    ///   first use (FOperation is only set by the descendant's constructor)
+    ///   and held for the rest of this instance's life, so the call runs with
+    ///   the plans it started with even if the configuration is changed
+    ///   underneath it
+    /// </summary>
+    function GetRttiCache: INeonRttiCache;
+    function GetNeonMembers(AType: TRttiType): TNeonRttiMembers;
+
+    /// <summary>
+    ///   Returns the parsed TNeonRttiObject for a type, building it once and
+    ///   reusing it afterwards
+    /// </summary>
+    function GetNeonObject(ATypeInfo: PTypeInfo): TNeonRttiObject;
+
+    /// <summary>
+    ///   The custom serializer for a value: the one ANeonObject names through
+    ///   [NeonSerialize]/[NeonDeserialize] if any, otherwise the one the
+    ///   configuration registers for the type, otherwise nil
+    /// </summary>
+    /// <remarks>
+    ///   A serializer named by the attribute is used as it is: its CanHandle is
+    ///   not consulted, and its ChangeConfig is not run, since it is not
+    ///   registered in the configuration
+    /// </remarks>
+    function GetCustomSerializer(ATypeInfo: PTypeInfo; ANeonObject: TNeonRttiObject): TCustomSerializer;
+
+    /// <summary>
+    ///   Which dynamic shape AInstance's class has, probed once per class and
+    ///   remembered afterwards
+    /// </summary>
+    function GetDynamicKind(AInstance: TObject): TNeonDynamicKind;
+    function GetNameFromMember(AMember: TNeonRttiMember): string; virtual;
+  public
+    constructor Create(const AConfig: INeonConfiguration);
+    destructor Destroy; override;
+
+    procedure LogError(const AMessage: string);
+    function GetConfiguration: INeonConfiguration;
+    function IsOriginalInstance(const AValue: TValue): Boolean;
+  public
+    property Config: TNeonConfiguration read FConfig;
+    property Errors: TStrings read FErrors;
+  end;
+
+  TTypeInfoUtils = class
+    class function EnumToString(ATypeInfo: PTypeInfo; AValue: Integer): string; static;
+
+    /// <summary>
+    ///   The JSON name of an enum value: an explicit [NeonEnumNames] entry
+    ///   verbatim, or the RTTI name shaped by the configured TNeonCase
+    /// </summary>
+    /// <remarks>
+    ///   The serializer, the deserializer and the schema generator all go
+    ///   through here, so the name written, the name read back and the names a
+    ///   schema advertises cannot drift apart
+    /// </remarks>
+    class function EnumToJSONName(ATypeInfo: PTypeInfo; AValue: Integer;
+      ACase: TNeonCase; ACaseFunc: TCaseFunc): string; static;
+  end;
+
+  {$ENDREGION}
+
+implementation
+
+uses
+  System.Diagnostics,
+  System.RegularExpressions,
+  Neon.Core.Utils;
+
+{ TNeonBase }
+
+constructor TNeonBase.Create(const AConfig: INeonConfiguration);
+begin
+  FConfigIntf := AConfig;
+  FConfig := AConfig as TNeonConfiguration;
+  FErrors := TStringList.Create;
+end;
+
+destructor TNeonBase.Destroy;
+begin
+  // FRttiCache is reference counted: the configuration normally outlives this
+  // instance and keeps it, and a cache detached mid-call dies here instead
+  FErrors.Free;
+  inherited;
+end;
+
+function TNeonBase.GetRttiCache: INeonRttiCache;
+begin
+  if not Assigned(FRttiCache) then
+    FRttiCache := FConfig.GetRttiCache(FOperation);
+  Result := FRttiCache;
+end;
+
+function TNeonBase.GetConfiguration: INeonConfiguration;
+begin
+  Result := FConfigIntf;
+end;
+
+function TNeonBase.GetNameFromMember(AMember: TNeonRttiMember): string;
+var
+  LMemberName: string;
+begin
+  // The name depends only on the member and the configuration, both fixed for
+  // the lifetime of this serializer, so it is computed once per member and
+  // cached: without this the case conversion below allocates a new string for
+  // every member of every object written/read.
+  if AMember.TryGetJSONName(Result) then
+    Exit;
+
+  if not AMember.NeonProperty.IsEmpty then
+    Result := AMember.NeonProperty
+  else
+  begin
+    if FConfig.IgnoreFieldPrefix and AMember.IsField then
+    begin
+      // A convention, not a heuristic: the leading letter goes whether it is F
+      // or f and whatever follows it, so a private field named Formula or
+      // firstName is published as ormula / irstName. Narrowing the match now
+      // would rename members in every document already produced with
+      // IgnoreFieldPrefix (Snake and ScreamingSnake set it), so the behavior
+      // stays documented and [NeonProperty] is the per-member way out
+      if AMember.Name.StartsWith('F', True) and
+         (AMember.Visibility in [mvPrivate, mvProtected])
+      then
+        LMemberName := AMember.Name.Substring(1)
+      else
+        LMemberName := AMember.Name;
+    end
+    else
+      LMemberName := AMember.Name;
+
+    Result := TCaseAlgorithm.ConvertCase(LMemberName, FConfig.MemberCase, FConfig.MemberCustomCase);
+  end;
+
+  AMember.SetJSONName(Result);
+end;
+
+function TNeonBase.GetNeonMembers(AType: TRttiType): TNeonRttiMembers;
+var
+  LFields, LProps: TArray<TRttiMember>;
+  LMember: TRttiMember;
+  LNeonMember: TNeonRttiMember;
+  LStamp: Int64;
+
+  function AlphaComparer(AReverse: Boolean): IComparer<TNeonRttiMember>;
+  begin
+    Result := TComparer<TNeonRttiMember>.Construct(
+      function (const L, R: TNeonRttiMember): Integer
+      begin
+        if AReverse then
+          Result := CompareStr(R.Name, L.Name)
+        else
+          Result := CompareStr(L.Name, R.Name);
+      end
+    );
+  end;
+
+begin
+  // Cache hit (the steady-state path, once every type has been seen once)
+  // and cache miss (the one-off build below) are lumped into one section:
+  // over many calls for the same type, hits dominate the average.
+  LStamp := TNeonLogger.ProfileBegin;
+  if GetRttiCache.Members.TryGetValue(AType.Handle, Result) then
+  begin
+    TNeonLogger.ProfileEnd('Core:GetNeonMembers', LStamp);
+    Exit(Result);
+  end;
+  TNeonLogger.ProfileEnd('Core:GetNeonMembers', LStamp);
+
+  Result := TNeonRttiMembers.Create(FConfig, AType, FOperation);
+  try
+    SetLength(LFields, 0);
+    SetLength(LProps, 0);
+
+    if AType.IsRecord then
+    begin
+      LFields := TArray<TRttiMember>(AType.AsRecord.GetFields);
+      LProps  := TArray<TRttiMember>(AType.AsRecord.GetProperties);
+      // GetIndexedProperties
+    end
+    else if AType.IsInstance then
+    begin
+      LFields := TArray<TRttiMember>(AType.AsInstance.GetFields);
+      LProps  := TArray<TRttiMember>(AType.AsInstance.GetProperties);
+      // GetIndexedProperties
+    end;
+
+    for LMember in LFields do
+    begin
+      LNeonMember := Result.NewMember(LMember);
+      Result.Add(LNeonMember);
+    end;
+    for LMember in LProps do
+    begin
+      LNeonMember := Result.NewMember(LMember);
+      Result.Add(LNeonMember);
+    end;
+  except
+    Result.Free;
+    raise;
+  end;
+  GetRttiCache.Members.Add(AType.Handle, Result);
+
+  case FConfig.MemberSort of
+    TNeonSort.Rtti: ; // Default, do nothing
+    TNeonSort.RttiReverse: Result.Reverse;
+    TNeonSort.Alpha: Result.Sort(AlphaComparer(False));
+    TNeonSort.AlphaReverse: Result.Sort(AlphaComparer(True));
+  end;
+end;
+
+function TNeonBase.GetTypeMembers(AType: TRttiType): TArray<TRttiMember>;
+begin
+  SetLength(Result, 0);
+
+  if TNeonMembers.Standard in FConfig.Members then
+  begin
+    if AType.IsRecord then
+      Result := TArray<TRttiMember>(AType.AsRecord.GetFields)
+    else if AType.IsInstance then
+      Result := TArray<TRttiMember>(AType.AsInstance.GetProperties);
+  end;
+
+  if TNeonMembers.Properties in FConfig.Members then
+  begin
+    if AType.IsRecord then
+      Result := TArray<TRttiMember>(AType.AsRecord.GetProperties)
+    else if AType.IsInstance then
+      Result := TArray<TRttiMember>(AType.AsInstance.GetProperties);
+  end;
+
+  if TNeonMembers.Fields in FConfig.Members then
+  begin
+    if AType.IsRecord then
+      Result := TArray<TRttiMember>(AType.AsRecord.GetFields)
+    else if AType.IsInstance then
+      Result := TArray<TRttiMember>(AType.AsInstance.GetFields);
+  end;
+end;
+
+function TNeonBase.IsOriginalInstance(const AValue: TValue): Boolean;
+begin
+  // Both sides must hold something: FOriginalInstance is not set by every entry
+  // point (JSONToArray, for one) and a nil member has no raw data either, so
+  // dereferencing the pointers unconditionally would fault
+  if AValue.IsEmpty or FOriginalInstance.IsEmpty then
+    Exit(False);
+
+  Result := NativeInt(AValue.GetReferenceToRawData^) = NativeInt(FOriginalInstance.GetReferenceToRawData^);
+end;
+
+function TNeonBase.GetCustomSerializer(ATypeInfo: PTypeInfo; ANeonObject: TNeonRttiObject): TCustomSerializer;
+begin
+  if Assigned(ANeonObject) and Assigned(ANeonObject.NeonSerializerClass) then
+    Result := FConfig.Serializers.GetSerializerInstance(ANeonObject.NeonSerializerClass)
+  else
+    Result := FConfig.Serializers.GetSerializer(ATypeInfo);
+end;
+
+function TNeonBase.GetNeonObject(ATypeInfo: PTypeInfo): TNeonRttiObject;
+begin
+  // The attributes of a type do not change, so the TNeonRttiObject that holds
+  // them is cached per type, the way the member lists are. The entry overloads
+  // of Write/ReadDataMember are called once per array element, list item and
+  // dictionary key/value: without this, each of those resolved the RTTI type
+  // and re-parsed the attributes, then threw the result away.
+  // Nothing writes back into a parsed TNeonRttiObject, so a single instance can
+  // serve every element of its type
+  if GetRttiCache.Objects.TryGetValue(ATypeInfo, Result) then
+    Exit;
+
+  Result := TNeonRttiObject.Create(TRttiUtils.Context.GetType(ATypeInfo), FOperation);
+  Result.ParseAttributes;
+  GetRttiCache.Objects.Add(ATypeInfo, Result);
+end;
+
+function TNeonBase.GetDynamicKind(AInstance: TObject): TNeonDynamicKind;
+begin
+  // Every TDynamic*.GuessType walks the class' RTTI looking up methods and
+  // properties by name, and the answer only ever depends on the class - so it
+  // is worked out once and kept. Without this, each of the three probes ran
+  // again for every single object written or read, which on a document of
+  // nested entities is the largest cost in the engine
+  if GetRttiCache.DynamicKinds.TryGetValue(AInstance.ClassType, Result) then
+    Exit;
+
+  // Probed in the same order the engine dispatches them, so a class that
+  // matches more than one shape is classified as the engine would treat it.
+  // The adapters built here are dropped: this runs once per class, and each
+  // one frees the enumerator it probed with
+  if Assigned(TDynamicMap.GuessType(AInstance)) then
+    Result := TNeonDynamicKind.Map
+  else if Assigned(TDynamicList.GuessType(AInstance)) then
+    Result := TNeonDynamicKind.List
+  else if Assigned(TDynamicStream.GuessType(AInstance)) then
+    Result := TNeonDynamicKind.Stream
+  else
+    Result := TNeonDynamicKind.Plain;
+
+  GetRttiCache.DynamicKinds.Add(AInstance.ClassType, Result);
+end;
+
+procedure TNeonBase.LogError(const AMessage: string);
+begin
+  FErrors.Add(AMessage);
+
+  // Errors are only in FErrors, and the TNeon facade frees this instance - and
+  // FErrors with it - before returning: without a handler a caller running with
+  // RaiseExceptions off cannot tell that a member was dropped
+  if Assigned(FConfig.OnError) then
+    FConfig.OnError(AMessage, FOperation);
+end;
+
+{ TNeonRttiCache }
+
+constructor TNeonRttiCache.Create;
+begin
+  FMembers := TMemberRegistry.Create([doOwnsValues]);
+  FObjects := TNeonObjectRegistry.Create([doOwnsValues]);
+  FDynamicKinds := TDynamicKindRegistry.Create;
+end;
+
+destructor TNeonRttiCache.Destroy;
+begin
+  FDynamicKinds.Free;
+  FObjects.Free;
+  FMembers.Free;
+  inherited;
+end;
+
+function TNeonRttiCache.GetMembers: TMemberRegistry;
+begin
+  Result := FMembers;
+end;
+
+function TNeonRttiCache.GetObjects: TNeonObjectRegistry;
+begin
+  Result := FObjects;
+end;
+
+function TNeonRttiCache.GetDynamicKinds: TDynamicKindRegistry;
+begin
+  Result := FDynamicKinds;
+end;
+
+{ TNeonConfiguration }
+
+constructor TNeonConfiguration.Create;
+begin
+  // Before the setters below, which invalidate it
+  FRttiCaches := TDictionary<UInt64, INeonRttiCache>.Create;
+  FRttiCachesLock := TCriticalSection.Create;
+
+  FSerializers := TNeonSerializerRegistry.Create;
+  FFactoryList := TNeonFactoryRegistry.Create;
+  FTypeConfigurator := TTypeConfigurator.Create(Self);
+
+  SetMemberCase(TNeonCase.Unchanged);
+  SetMembers([TNeonMembers.Standard]);
+  SetIgnoreFieldPrefix(False);
+  SetVisibility([mvPublic, mvPublished]);
+  SetUseUTCDate(True);
+  SetPrettyPrint(False);
+  SetStrictTypes(True);
+  SetIgnoreCircularRefs(True);
+  FClosedSchema := False;
+end;
+
+function TNeonConfiguration.GetRttiCache(AOperation: TNeonOperation): INeonRttiCache;
+var
+  LKey: UInt64;
+begin
+  // One cache per thread and per operation: the entries hold per-instance state
+  // and are filled lazily, so they cannot be shared across threads, and the
+  // serialize and deserialize member plans differ
+  LKey := (UInt64(TThread.CurrentThread.ThreadID) shl 1) or UInt64(Ord(AOperation));
+
+  FRttiCachesLock.Enter;
+  try
+    if not FRttiCaches.TryGetValue(LKey, Result) then
+    begin
+      Result := TNeonRttiCache.Create;
+      FRttiCaches.Add(LKey, Result);
+    end;
+  finally
+    FRttiCachesLock.Leave;
+  end;
+end;
+
+procedure TNeonConfiguration.ClearRttiCache;
+begin
+  FRttiCachesLock.Enter;
+  try
+    FRttiCaches.Clear;
+  finally
+    FRttiCachesLock.Leave;
+  end;
+end;
+
+destructor TNeonConfiguration.Destroy;
+begin
+  FRttiCaches.Free;
+  FRttiCachesLock.Free;
+  FTypeConfigurator.Free;
+  FFactoryList.Free;
+  FSerializers.Free;
+  inherited;
+end;
+
+class function TNeonConfiguration.Default: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetMemberCase(TNeonCase.PascalCase);
+end;
+
+class function TNeonConfiguration.Pretty: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetMemberCase(TNeonCase.PascalCase)
+    .SetPrettyPrint(True);
+end;
+
+function TNeonConfiguration.RegisterFactory(AClass: TCustomFactoryClass): INeonConfiguration;
+begin
+  FFactoryList.Add(AClass);
+  Result := Self;
+end;
+
+function TNeonConfiguration.RegisterSerializer(AClass: TCustomSerializerClass): INeonConfiguration;
+begin
+  FSerializers.RegisterSerializer(AClass);
+  AClass.ChangeConfig(Self);
+  Result := Self;
+end;
+
+function TNeonConfiguration.AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration;
+begin
+  FIgnoreMembers := FIgnoreMembers + AMemberList;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+class function TNeonConfiguration.Camel: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetMemberCase(TNeonCase.CamelCase);
+end;
+
+class function TNeonConfiguration.Snake: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetIgnoreFieldPrefix(True)
+    .SetMemberCase(TNeonCase.SnakeCase);
+end;
+
+function TNeonConfiguration.GetFactoryList: TNeonFactoryRegistry;
+begin
+  Result := FFactoryList;
+end;
+
+function TNeonConfiguration.GetPrettyPrint: Boolean;
+begin
+  Result := FPrettyPrint;
+end;
+
+function TNeonConfiguration.GetRaiseExceptions: Boolean;
+begin
+  Result := FRaiseExceptions;
+end;
+
+function TNeonConfiguration.GetOnError: TNeonErrorCallback;
+begin
+  Result := FOnError;
+end;
+
+function TNeonConfiguration.GetSerializers: TNeonSerializerRegistry;
+begin
+  Result := FSerializers;
+end;
+
+function TNeonConfiguration.GetTypeConfigurator: TTypeConfigurator;
+begin
+  // No invalidation here: the rules invalidate when they are *changed*
+  // (TNeonConfigurationType.Set/AddIgnoreMembers), which also covers the caller
+  // who keeps the INeonConfigurationType and adds a rule later. Clearing on the
+  // way out only worked for rules added on the same expression, and dropped the
+  // caches even when nothing changed
+  Result := FTypeConfigurator;
+end;
+
+function TNeonConfiguration.GetUseUTCDate: Boolean;
+begin
+  Result := FUseUTCDate;
+end;
+
+function TNeonConfiguration.IgnoreMember(AType: TRttiType; const AMember: string): Boolean;
+var
+  LMember: string;
+begin
+  // First find a correspondence in the global ignore list
+  for LMember in FIgnoreMembers do
+    if SameText(AMember, LMember) then
+      Exit(True);
+
+  if AType.IsRecord then
+    Exit(FTypeConfigurator.IgnoreRecord(AType.AsRecord, AMember));
+
+  if AType.IsInstance then
+    Exit(FTypeConfigurator.IgnoreClass(AType.AsInstance, AMember));
+
+  Result := False;
+end;
+
+class function TNeonConfiguration.Kebab: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetMemberCase(TNeonCase.KebabCase);
+end;
+
+function TNeonConfiguration.SetMembers(AValue: TNeonMembersSet): INeonConfiguration;
+begin
+  FMembers := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetMemberSort(AValue: TNeonSort): INeonConfiguration;
+begin
+  FMemberSort := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetMapSort(AValue: TNeonSort): INeonConfiguration;
+begin
+  FMapSort := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetPrettyPrint(AValue: Boolean): INeonConfiguration;
+begin
+  FPrettyPrint := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetRaiseExceptions(AValue: Boolean): INeonConfiguration;
+begin
+  FRaiseExceptions := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetOnError(AValue: TNeonErrorCallback): INeonConfiguration;
+begin
+  FOnError := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetUseUTCDate(AValue: Boolean): INeonConfiguration;
+begin
+  FUseUTCDate := AValue;
+  Result := Self;
+end;
+
+class function TNeonConfiguration.ScreamingSnake: INeonConfiguration;
+begin
+  Result := TNeonConfiguration.Create
+    .SetIgnoreFieldPrefix(True)
+    .SetMemberCase(TNeonCase.ScreamingSnakeCase);
+end;
+
+function TNeonConfiguration.SetAutoCreate(AValue: Boolean): INeonConfiguration;
+begin
+  FAutoCreate := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetEnumAsInt(AValue: Boolean): INeonConfiguration;
+begin
+  FEnumAsInt := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetClosedSchema(AValue: Boolean): INeonConfiguration;
+begin
+  // When True, generated JSON Schemas for classes/records carry
+  // "additionalProperties": false - the object admits exactly the declared
+  // members. Defaults to False (open), matching the deserializer, which
+  // ignores unknown properties
+  FClosedSchema := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetIgnoreFieldPrefix(AValue: Boolean): INeonConfiguration;
+begin
+  FIgnoreFieldPrefix := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfiguration;
+begin
+  FIgnoreMembers := AMemberList;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetIgnoreReadOnlyProps(AValue: Boolean): INeonConfiguration;
+begin
+  FIgnoreReadOnlyProps := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetStrictTypes(AValue: Boolean): INeonConfiguration;
+begin
+  FStrictTypes := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetIgnoreCircularRefs(AValue: Boolean): INeonConfiguration;
+begin
+  FIgnoreCircularRefs := AValue;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetMemberCase(AValue: TNeonCase): INeonConfiguration;
+begin
+  FMemberCase := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetMemberCustomCase(AValue: TCaseFunc): INeonConfiguration;
+begin
+  FMemberCustomCase := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+function TNeonConfiguration.SetVisibility(AValue: TNeonVisibility): INeonConfiguration;
+begin
+  FVisibility := AValue;
+  ClearRttiCache;
+  Result := Self;
+end;
+
+{ TNeonMemberAccessor }
+
+function TNeonMemberAccessor.Assigned: Boolean;
+begin
+  Result := Kind <> TNeonAccessorKind.None;
+end;
+
+{ TNeonRttiMember }
+
+constructor TNeonRttiMember.Create(AMember: TRttiMember; AParent: TNeonRttiType; AOperation: TNeonOperation);
+begin
+  inherited Create(AMember, AOperation);
+  FMember := AMember;
+  FParent := AParent;
+
+  if FMember is TRttiProperty then
+  begin
+    FMemberType := TNeonMemberType.Prop;
+    FMemberRttiType := (FMember as TRttiProperty).PropertyType;
+  end
+  else if FMember is TRttiField then
+  begin
+    FMemberType := TNeonMemberType.Field;
+    FMemberRttiType := (FMember as TRttiField).FieldType;
+  end;
+
+  if Assigned(FMemberRttiType) then
+    FTypeAttributes := FMemberRttiType.GetAttributes;
+
+  ParseAttributes;
+end;
+
+function TNeonRttiMember.EvalIncludeIf(AInstance: Pointer): TNeonIncludeOption;
+var
+  LRes: TValue;
+begin
+  LRes := False;
+  if not Assigned(FMethodIf) then
+    Exit(TNeonIncludeOption.Default);
+
+  // we can only invoke a regular method on an existing object
+  if (AInstance <> nil) and (FMethodIf.MethodKind = mkFunction) then
+    LRes := FMethodIf.Invoke(TObject(AInstance), [TValue.From<TNeonIgnoreIfContext>(FMethodIfContext)])
+
+  // if the method is a class method, we can invoke it too, but have to do it a bit differently
+  else if FMethodIf.MethodKind = mkClassFunction then
+    LRes := FMethodIf.Invoke(FParent.FType.AsInstance.MetaClassType, [TValue.From<TNeonIgnoreIfContext>(FMethodIfContext)])
+  else
+    // can't really evaluate, so continue with default
+    Exit(TNeonIncludeOption.Default);
+
+  case LRes.AsType<Boolean> of
+    True: Result := TNeonIncludeOption.Include;
+    False: Result := TNeonIncludeOption.Exclude;
+  end;
+end;
+
+function TNeonRttiMember.GetName: string;
+begin
+  Result := FMember.Name;
+end;
+
+function TNeonRttiMember.HasIncludeIf: Boolean;
+begin
+  // FMethodIf is resolved in ProcessAttribute during construction
+  Result := Assigned(FMethodIf);
+end;
+
+function TNeonRttiMember.TryGetJSONName(out AName: string): Boolean;
+begin
+  Result := FJSONNameCached;
+  if Result then
+    AName := FJSONName;
+end;
+
+procedure TNeonRttiMember.SetJSONName(const AValue: string);
+begin
+  FJSONName := AValue;
+  FJSONNameCached := True;
+end;
+
+function TNeonRttiMember.AccessorGetValue(const AAccessor: TNeonMemberAccessor; AInstance: Pointer): TValue;
+begin
+  Result := TValue.Empty;
+  case AAccessor.Kind of
+    TNeonAccessorKind.Field : Result := AAccessor.Field.GetValue(AInstance);
+    TNeonAccessorKind.Prop  : Result := AAccessor.Prop.GetValue(AInstance);
+    // ResolveAccessor only accepts a method on a class member, so the instance
+    // is an object and the method takes no parameter
+    TNeonAccessorKind.Method: Result := AAccessor.Method.Invoke(TObject(AInstance), []);
+  end;
+end;
+
+procedure TNeonRttiMember.AccessorSetValue(const AAccessor: TNeonMemberAccessor; const AValue: TValue; AInstance: Pointer);
+begin
+  case AAccessor.Kind of
+    TNeonAccessorKind.Field : AAccessor.Field.SetValue(AInstance, AValue);
+    TNeonAccessorKind.Prop  : AAccessor.Prop.SetValue(AInstance, AValue);
+    TNeonAccessorKind.Method: AAccessor.Method.Invoke(TObject(AInstance), [AValue]);
+  end;
+end;
+
+function TNeonRttiMember.GetValue(AInstance: Pointer): TValue;
+begin
+  if FNeonGetter.Assigned then
+    Exit(AccessorGetValue(FNeonGetter, AInstance));
+
+  case FMemberType of
+    TNeonMemberType.Unknown: raise ENeonException.Create(SNeonErrorFieldProp);
+    TNeonMemberType.Prop   :
+    begin
+      // A write-only property has no value to read: deserialization asks for
+      // the current one before writing it, and a [NeonSetter] is exactly what
+      // makes such a property reachable, so answer "nothing" instead of
+      // letting the RTTI call raise
+      if not MemberAsProperty.IsReadable then
+        Exit(TValue.Empty);
+      Result := MemberAsProperty.GetValue(AInstance);
+    end;
+    TNeonMemberType.Field  : Result := MemberAsField.GetValue(AInstance);
+  end;
+end;
+
+function TNeonRttiMember.IsField: Boolean;
+begin
+  Result := False;
+  case FMemberType of
+    TNeonMemberType.Field: Result := True;
+  end;
+end;
+
+function TNeonRttiMember.IsProperty: Boolean;
+begin
+  Result := False;
+  case FMemberType of
+    TNeonMemberType.Prop: Result := True;
+  end;
+end;
+
+function TNeonRttiMember.IsReadable: Boolean;
+begin
+  // The whole point of a [NeonGetter] is to give a member Neon cannot read
+  // (a write-only property) a value to serialize
+  if FNeonGetter.Assigned then
+    Exit(True);
+
+  Result := False;
+  case FMemberType of
+    TNeonMemberType.Unknown: raise ENeonException.Create(SNeonErrorFieldProp);
+    TNeonMemberType.Prop   : Result := MemberAsProperty.IsReadable;
+    TNeonMemberType.Field  : Result := True;
+  end;
+end;
+
+function TNeonRttiMember.IsWritable: Boolean;
+begin
+  // Same for a [NeonSetter] and a read-only property
+  if FNeonSetter.Assigned then
+    Exit(True);
+
+  Result := False;
+  case FMemberType of
+    TNeonMemberType.Unknown: raise ENeonException.Create(SNeonErrorFieldProp);
+    TNeonMemberType.Prop   : Result := MemberAsProperty.IsWritable;
+    TNeonMemberType.Field  : Result := True;
+  end;
+end;
+
+function TNeonRttiMember.MemberAsField: TRttiField;
+begin
+  Result := FMember as TRttiField;
+end;
+
+function TNeonRttiMember.MemberAsProperty: TRttiProperty;
+begin
+  Result := FMember as TRttiProperty;
+end;
+
+function TNeonRttiMember.MemberType: TNeonMemberType;
+begin
+  Result := FMemberType;
+end;
+
+function TNeonRttiMember.RttiType: TRttiType;
+begin
+  Result := nil;
+  case FMemberType of
+    TNeonMemberType.Unknown: raise ENeonException.Create(SNeonErrorFieldProp);
+    TNeonMemberType.Prop   : Result := MemberAsProperty.PropertyType;
+    TNeonMemberType.Field  : Result := MemberAsField.FieldType;
+  end;
+end;
+
+procedure TNeonRttiMember.ProcessAttribute(AAttribute: TCustomAttribute);
+var
+  LIncludeAttribute: NeonIncludeAttribute;
+  LMethodName: string;
+begin
+  if AAttribute is NeonIncludeAttribute then
+  begin
+    LIncludeAttribute := AAttribute as NeonIncludeAttribute;
+    if LIncludeAttribute.IncludeValue.Value = IncludeIf.CustomFunction then
+    begin
+      LMethodName := LIncludeAttribute.IncludeValue.IncludeFunction;
+      FMethodIf := FParent.FType.GetMethod(LMethodName);
+      if not Assigned(FMethodIf) then
+        raise ENeonException.CreateFmt(SNeonErrorNoMethodF2, [LMethodName, FParent.AsRttiType.Name]);
+
+      FMethodIfContext := TNeonIgnoreIfContext.Create(Self.Name, FOperation);
+    end;
+  end
+  // NeonSetter descends from NeonGetter, so it has to be recognized first
+  else if AAttribute is NeonSetterAttribute then
+    FNeonSetter := ResolveAccessor(AAttribute as NeonGetterAttribute, True)
+  else if AAttribute is NeonGetterAttribute then
+    FNeonGetter := ResolveAccessor(AAttribute as NeonGetterAttribute, False);
+end;
+
+function TNeonRttiMember.ResolveAccessor(AAttribute: NeonGetterAttribute; AWriting: Boolean): TNeonMemberAccessor;
+var
+  LLabel, LName: string;
+  LOwner, LAccessorType: TRttiType;
+  LParams: TArray<TRttiParameter>;
+
+  function TypeName(AType: TRttiType): string;
+  begin
+    if Assigned(AType) then
+      Result := AType.Name
+    else
+      Result := '?';
+  end;
+
+begin
+  Result := Default(TNeonMemberAccessor);
+
+  if AWriting then
+    LLabel := 'NeonSetter'
+  else
+    LLabel := 'NeonGetter';
+
+  LName := AAttribute.Value;
+  if LName.IsEmpty then
+    raise ENeonException.CreateFmt(SNeonErrorAccessorNoNameF1, [LLabel]);
+
+  LOwner := FParent.AsRttiType;
+
+  // An identifier names at most one member of a Delphi type, so the three
+  // lookups cannot disagree and the attribute has nothing to disambiguate.
+  // They run once per member, while the member proxies are built and cached
+  Result.Field := LOwner.GetField(LName);
+  if Assigned(Result.Field) then
+    Result.Kind := TNeonAccessorKind.Field;
+
+  if Result.Kind = TNeonAccessorKind.None then
+  begin
+    Result.Prop := LOwner.GetProperty(LName);
+    if Assigned(Result.Prop) then
+      Result.Kind := TNeonAccessorKind.Prop;
+  end;
+
+  if Result.Kind = TNeonAccessorKind.None then
+  begin
+    Result.Method := LOwner.GetMethod(LName);
+    if Assigned(Result.Method) then
+      Result.Kind := TNeonAccessorKind.Method;
+  end;
+
+  if Result.Kind = TNeonAccessorKind.None then
+    raise ENeonException.CreateFmt(SNeonErrorAccessorNotFoundF3, [LLabel, LName, LOwner.Name]);
+
+  // The type the accessor reads or writes, and whether it can do so at all
+  LAccessorType := nil;
+  case Result.Kind of
+    TNeonAccessorKind.Field: LAccessorType := Result.Field.FieldType;
+
+    TNeonAccessorKind.Prop:
+    begin
+      if AWriting and not Result.Prop.IsWritable then
+        raise ENeonException.CreateFmt(SNeonErrorAccessorNotWritableF2, [LLabel, LName]);
+      if not AWriting and not Result.Prop.IsReadable then
+        raise ENeonException.CreateFmt(SNeonErrorAccessorNotReadableF2, [LLabel, LName]);
+      LAccessorType := Result.Prop.PropertyType;
+    end;
+
+    TNeonAccessorKind.Method:
+    begin
+      // A method needs an instance to run on, and a record is handed around as
+      // a pointer to a copy that TRttiMethod cannot be given
+      if LOwner.TypeKind <> tkClass then
+        raise ENeonException.CreateFmt(SNeonErrorAccessorMethodClassF2, [LLabel, LName]);
+
+      LParams := Result.Method.GetParameters;
+      if AWriting then
+      begin
+        // The value to write is the method's only parameter
+        if Length(LParams) <> 1 then
+          raise ENeonException.CreateFmt(SNeonErrorAccessorNotWritableF2, [LLabel, LName]);
+        LAccessorType := LParams[0].ParamType;
+      end
+      else
+      begin
+        // The value to read is the method's result
+        if (Length(LParams) > 0) or not Assigned(Result.Method.ReturnType) then
+          raise ENeonException.CreateFmt(SNeonErrorAccessorNotReadableF2, [LLabel, LName]);
+        LAccessorType := Result.Method.ReturnType;
+      end;
+    end;
+  end;
+
+  // Same type on both sides: the value travels between the two members
+  // untouched, so there is no conversion to invent (or to get wrong)
+  if not Assigned(LAccessorType) or
+     not Assigned(FMemberRttiType) or
+     (LAccessorType.Handle <> FMemberRttiType.Handle) then
+    raise ENeonException.CreateFmt(SNeonErrorAccessorTypeF4,
+      [LLabel, LName, TypeName(FMemberRttiType), TypeName(LAccessorType)]);
+end;
+
+procedure TNeonRttiMember.SetValue(const AValue: TValue; AInstance: Pointer);
+begin
+  if FNeonSetter.Assigned then
+  begin
+    AccessorSetValue(FNeonSetter, AValue, AInstance);
+    Exit;
+  end;
+
+  case FMemberType of
+    TNeonMemberType.Prop :
+    begin
+      if MemberAsProperty.IsWritable then
+        MemberAsProperty.SetValue(AInstance, AValue);
+    end;
+    TNeonMemberType.Field: MemberAsField.SetValue(AInstance, AValue);
+  end;
+end;
+
+function TNeonRttiMember.TypeKind: TTypeKind;
+begin
+  Result := tkUnknown;
+  case FMemberType of
+    TNeonMemberType.Unknown: raise ENeonException.Create(SNeonErrorFieldProp);
+    TNeonMemberType.Prop   : Result := MemberAsProperty.PropertyType.TypeKind;
+    TNeonMemberType.Field  : Result := MemberAsField.FieldType.TypeKind;
+  end;
+end;
+
+function TNeonRttiMember.Visibility: TMemberVisibility;
+begin
+  Result := FMember.Visibility
+end;
+
+{ TCaseAlgorithm }
+
+class function TCaseAlgorithm.CamelToPascal(const AString: string): string;
+var
+  LOld, LNew: Char;
+begin
+  Result := AString;
+  if Result.IsEmpty then
+    Exit;
+
+  LOld := Result.Chars[0];
+  LNew := UpperCase(LOld).Chars[0];
+
+  Result := Result.Replace(LOld, LNew, []);
+end;
+
+class function TCaseAlgorithm.ConvertCase(const AName: string; ACase: TNeonCase;
+  ACaseFunc: TCaseFunc): string;
+begin
+  Result := AName;
+  case ACase of
+    TNeonCase.Unchanged : Result := AName;
+    TNeonCase.LowerCase : Result := LowerCase(AName);
+    TNeonCase.UpperCase : Result := UpperCase(AName);
+    TNeonCase.PascalCase: Result := AName;
+    TNeonCase.CamelCase : Result := PascalToCamel(AName);
+    TNeonCase.SnakeCase : Result := PascalToSnake(AName);
+    TNeonCase.KebabCase : Result := PascalToKebab(AName);
+    TNeonCase.ScreamingSnakeCase : Result := PascalToScreamingSnake(AName);
+
+    TNeonCase.CustomCase:
+    begin
+      if Assigned(ACaseFunc) then
+        Result := ACaseFunc(AName);
+    end;
+  end;
+end;
+
+class function TCaseAlgorithm.KebabToPascal(const AString: string): string;
+var
+  LChar: Char;
+  LIndex: Integer;
+  LSingleWord: string;
+  LWords: TArray<string>;
+begin
+  LWords := AString.Split(['-']);
+  for LIndex := 0 to Length(LWords) - 1 do
+  begin
+    LSingleWord := LWords[LIndex];
+    if LSingleWord.IsEmpty then
+      Continue;
+    LChar := Upcase(LSingleWord.Chars[0]);
+    LSingleWord := LSingleWord.Remove(0, 1);
+    LSingleWord := LSingleWord.Insert(0, LChar);
+    LWords[LIndex] := LSingleWord;
+  end;
+
+  Result := string.Join('', LWords);
+end;
+
+class function TCaseAlgorithm.PascalToCamel(const AString: string): string;
+var
+  LOld, LNew: Char;
+begin
+  Result := AString;
+  if Result.IsEmpty then
+    Exit;
+
+  LOld := Result.Chars[0];
+  LNew := LowerCase(LOld).Chars[0];
+
+  Result := Result.Replace(LOld, LNew, []);
+end;
+
+class function TCaseAlgorithm.PascalToKebab(const AString: string): string;
+begin
+  Result := LowerCase(
+    TRegEx.Replace(AString,
+    '([A-Z][a-z\d]+)(?=([A-Z][A-Za-z\d]+))', '$1-', [])
+  );
+end;
+
+class function TCaseAlgorithm.PascalToSnake(const AString: string): string;
+begin
+  Result := LowerCase(
+    TRegEx.Replace(AString,
+    '([A-Z][a-z\d]+)(?=([A-Z][A-Za-z\d]+))', '$1_', [])
+  );
+end;
+
+class function TCaseAlgorithm.PascalToScreamingSnake(const AString: string):
+    string;
+begin
+  Result := UpperCase(
+    TRegEx.Replace(AString,
+    '([A-Z][a-z\d]+)(?=([A-Z][A-Za-z\d]+))', '$1_', [])
+  );
+end;
+
+class function TCaseAlgorithm.SnakeToPascal(const AString: string): string;
+var
+  LChar: Char;
+  LIndex: Integer;
+  LSingleWord: string;
+  LWords: TArray<string>;
+begin
+  LWords := AString.Split(['_']);
+  for LIndex := 0 to Length(LWords) - 1 do
+  begin
+    LSingleWord := LWords[LIndex];
+    if LSingleWord.IsEmpty then
+      Continue;
+    LChar := Upcase(LSingleWord.Chars[0]);
+    LSingleWord := LSingleWord.Remove(0, 1);
+    LSingleWord := LSingleWord.Insert(0, LChar);
+    LWords[LIndex] := LSingleWord;
+  end;
+
+  Result := string.Join('', LWords);
+end;
+
+{ TNeonRttiMembers }
+
+constructor TNeonRttiMembers.Create(AConfig: TNeonConfiguration;
+  AType: TRttiType; AOperation: TNeonOperation);
+begin
+  inherited Create(True);
+
+  FConfig := AConfig;
+  FOperation := AOperation;
+  FParent := TNeonRttiType.Create(AType, AOperation);
+end;
+
+destructor TNeonRttiMembers.Destroy;
+begin
+  FParent.Free;
+  inherited;
+end;
+
+procedure TNeonRttiMembers.Prepare;
+var
+  LIndex: Integer;
+  LMember: TNeonRttiMember;
+  LStatic: Boolean;
+  LStamp: Int64;
+begin
+  LStamp := TNeonLogger.ProfileBegin;
+  try
+    FHasInstanceChecks := False;
+
+    for LIndex := 0 to Count - 1 do
+    begin
+      LMember := Items[LIndex];
+
+      // NeonInclude(Always) and NeonIgnore short-circuit every other check,
+      // matching the original evaluation order (and skipping the RTTI probes
+      // below entirely, as the original did)
+      if LMember.NeonInclude.Present and (LMember.NeonInclude.Value = IncludeIf.Always) then
+      begin
+        LMember.StaticSerializable := True;
+        LMember.Serializable := True;
+        Continue;
+      end;
+
+      if LMember.NeonIgnore then
+      begin
+        LMember.StaticSerializable := False;
+        LMember.Serializable := False;
+        Continue;
+      end;
+
+      // Type-level exclusions: the answer is the same for every instance.
+      // Kept in the original evaluation order, because IgnoreReadOnlyProps
+      // probes the member type (which is not guaranteed to have RTTI) and so
+      // must stay behind the ignore-list check that used to shield it
+      if FOperation = TNeonOperation.Serialize then
+        LStatic := LMember.IsReadable
+      else
+        LStatic := LMember.IsWritable;
+
+      if LStatic then
+        LStatic := not IgnoredName(LMember.Name);
+
+      if LStatic and (FOperation = TNeonOperation.Serialize) and FConfig.IgnoreReadOnlyProps then
+        if not LMember.IsWritable and not (LMember.TypeKind in [tkClass, tkInterface]) then
+          LStatic := False;
+
+      if LStatic then
+        LStatic := MatchesVisibility(LMember.Visibility) and
+                   MatchesMemberChoice(LMember.MemberType);
+
+      LMember.StaticSerializable := LStatic;
+      LMember.Serializable := LStatic;
+
+      // Only serialization consults a per-instance IncludeIf function
+      if (FOperation = TNeonOperation.Serialize) and LMember.HasIncludeIf then
+        FHasInstanceChecks := True;
+    end;
+
+    FPrepared := True;
+  finally
+    TNeonLogger.ProfileEnd('Core:PrepareMembers', LStamp);
+  end;
+end;
+
+procedure TNeonRttiMembers.FilterDeserialize(AInstance: Pointer);
+var
+  LStamp: Int64;
+begin
+  LStamp := TNeonLogger.ProfileBegin;
+  try
+    // Deserialization filtering has no instance-dependent checks at all, so
+    // the decision resolved in Prepare holds for every instance of the type.
+    if not FPrepared then
+      Prepare;
+  finally
+    TNeonLogger.ProfileEnd('Core:FilterDeserialize', LStamp);
+  end;
+end;
+
+procedure TNeonRttiMembers.FilterSerialize(AInstance: Pointer);
+var
+  LIndex: Integer;
+  LMember: TNeonRttiMember;
+  LStamp: Int64;
+begin
+  LStamp := TNeonLogger.ProfileBegin;
+  try
+    if not FPrepared then
+      Prepare;
+
+    // No [NeonInclude(CustomFunction)] member on this type: what Prepare
+    // computed is already correct, so there is nothing to redo per instance.
+    if not FHasInstanceChecks then
+      Exit;
+
+    for LIndex := 0 to Count - 1 do
+    begin
+      LMember := Items[LIndex];
+
+      if not LMember.HasIncludeIf then
+        Continue;
+
+      // Handled unconditionally by Prepare, and both win over the IncludeIf
+      // function in the original evaluation order
+      if LMember.NeonInclude.Present and (LMember.NeonInclude.Value = IncludeIf.Always) then
+        Continue;
+      if LMember.NeonIgnore then
+        Continue;
+
+      case LMember.EvalIncludeIf(AInstance) of
+        TNeonIncludeOption.Include: LMember.Serializable := True;
+        TNeonIncludeOption.Exclude: LMember.Serializable := False;
+      else
+        LMember.Serializable := LMember.StaticSerializable;
+      end;
+    end;
+  finally
+    TNeonLogger.ProfileEnd('Core:FilterSerialize', LStamp);
+  end;
+end;
+
+function TNeonRttiMembers.IgnoredName(const AName: string): Boolean;
+begin
+  Result := FConfig.IgnoreMember(FParent.AsRttiType, AName);
+end;
+
+function TNeonRttiMembers.MatchesMemberChoice(AMemberType: TNeonMemberType): Boolean;
+var
+  LRttiType: TRttiType;
+  LMemberChoice: TNeonMembersSet;
+begin
+  Result := False;
+  if FParent.NeonMembers = [] then
+    LMemberChoice := FConfig.Members
+  else
+    LMemberChoice := FParent.NeonMembers;
+
+  if TNeonMembers.Standard in LMemberChoice then
+  begin
+    LRttiType := FParent.AsRttiType;
+    if Assigned(LRttiType) then
+    begin
+      if LRttiType.IsRecord then
+        LMemberChoice := LMemberChoice + [TNeonMembers.Fields];
+      if LRttiType.IsInstance then
+        LMemberChoice := LMemberChoice + [TNeonMembers.Properties];
+    end;
+  end;
+
+  case AMemberType of
+    //TNeonMemberType.Unknown: Result := False;
+    TNeonMemberType.Prop   :   Result := TNeonMembers.Properties in LMemberChoice;
+    TNeonMemberType.Field  :   Result := TNeonMembers.Fields in LMemberChoice;
+    //TNeonMemberType.Indexed: Result := False;
+  end;
+end;
+
+function TNeonRttiMembers.MatchesVisibility(AVisibility: TMemberVisibility): Boolean;
+var
+  LVisibility: TNeonVisibility;
+begin
+  Result := False;
+
+  if FParent.NeonVisibility = [] then
+    LVisibility := FConfig.Visibility
+  else
+    LVisibility := FParent.NeonVisibility;
+
+  if AVisibility in LVisibility then
+    Result := True;
+end;
+
+function TNeonRttiMembers.NewMember(AMember: TRttiMember): TNeonRttiMember;
+begin
+  Result := TNeonRttiMember.Create(AMember, FParent, FOperation);
+end;
+
+{ TNeonRttiObject }
+
+function TNeonRttiObject.AsRttiType: TRttiType;
+begin
+  // Throws an exception if not (is better than returnig nil and have to check outside)
+  Result := FRttiObject as TRttiType;
+end;
+
+constructor TNeonRttiObject.Create(ARttiObject: TRttiObject; AOperation: TNeonOperation);
+var
+  LStamp: Int64;
+begin
+  LStamp := TNeonLogger.ProfileBegin;
+  FRttiObject := ARttiObject;
+  FOperation := AOperation;
+  FAttributes := FRttiObject.GetAttributes;
+  FNeonMembers := [];
+  TNeonLogger.ProfileEnd('Core:RttiObjectCreate', LStamp);
+end;
+
+function TNeonRttiObject.GetAttribute<T>: T;
+var
+  LAttribute: TCustomAttribute;
+begin
+  Result := nil;
+  for LAttribute in FAttributes do
+    if LAttribute is T then
+      Exit(LAttribute as T);
+end;
+
+procedure TNeonRttiObject.InternalParseAttributes(const AAttr: TArray<TCustomAttribute>);
+var
+  LAttribute: TCustomAttribute;
+  LClass: TClass;
+begin
+  for LAttribute in AAttr do
+  begin
+    if LAttribute is NeonIncludeAttribute then
+      FNeonInclude := (LAttribute as NeonIncludeAttribute).IncludeValue
+    else if LAttribute is NeonSerializeAttribute then
+    begin
+      // NeonDeserialize descends from NeonSerialize: each one names the
+      // serializer for its own direction only, and this object serves one
+      // operation, so the other direction's attribute is not stored at all
+      if (LAttribute is NeonDeserializeAttribute) = (FOperation = TNeonOperation.Deserialize) then
+      begin
+        FNeonSerializerName := (LAttribute as NeonSerializeAttribute).Name;
+        LClass := (LAttribute as NeonSerializeAttribute).Clazz;
+        if Assigned(LClass) then
+        begin
+          if not LClass.InheritsFrom(TCustomSerializer) then
+            raise ENeonException.CreateFmt(SNeonErrorSerializerClassF2,
+              [LAttribute.ClassName, LClass.ClassName]);
+          FNeonSerializerClass := TCustomSerializerClass(LClass);
+        end;
+      end;
+    end
+    else if LAttribute is NeonFactoryAttribute then
+    begin
+      LClass := (LAttribute as NeonFactoryAttribute).FactoryClass;
+      if LClass.InheritsFrom(TCustomFactory) then
+        FNeonFactoryClass := TCustomFactoryClass(LClass);
+    end
+    else if LAttribute is NeonItemFactoryAttribute then
+    begin
+      LClass := (LAttribute as NeonItemFactoryAttribute).FactoryClass;
+      if LClass.InheritsFrom(TCustomFactory) then
+        FNeonItemFactoryClass := TCustomFactoryClass(LClass);
+    end
+    else if LAttribute is NeonIgnoreAttribute then
+      FNeonIgnore := True
+    else if LAttribute is NeonRawValueAttribute then
+      FNeonRawValue := True
+    else if LAttribute is NeonPropertyAttribute then
+      FNeonProperty := (LAttribute as NeonPropertyAttribute).Value
+    else if LAttribute is NeonEnumNamesAttribute then
+      FNeonEnumNames := (LAttribute as NeonEnumNamesAttribute).Names
+    else if LAttribute is NeonVisibilityAttribute then
+      FNeonVisibility := (LAttribute as NeonVisibilityAttribute).Value
+    else if LAttribute is NeonMembersSetAttribute then
+      FNeonMembers := (LAttribute as NeonMembersSetAttribute).Value
+    else if LAttribute is NeonUnwrappedAttribute then
+      FNeonUnwrapped := True  //Only applicable to complex types (classes, records, interfaces)
+    else if LAttribute is NeonAutoCreateAttribute then
+      FNeonAutoCreate := True  //Only applicable to class types
+    else if LAttribute is NeonSingleOrArrayAttribute then
+      FNeonSingleOrArray := True;  //Only applicable to arrays and lists
+
+    // Further attribute processing
+    ProcessAttribute(LAttribute);
+  end;
+end;
+
+procedure TNeonRttiObject.ParseAttributes;
+var
+  LStamp: Int64;
+begin
+  LStamp := TNeonLogger.ProfileBegin;
+  if Length(FTypeAttributes) > 0 then
+    InternalParseAttributes(FTypeAttributes);
+  if Length(FAttributes) > 0 then
+    InternalParseAttributes(FAttributes);
+  TNeonLogger.ProfileEnd('Core:ParseAttributes', LStamp);
+end;
+
+procedure TNeonRttiObject.ProcessAttribute(AAttribute: TCustomAttribute);
+begin
+
+end;
+
+{ TNeonRttiType }
+
+constructor TNeonRttiType.Create(AType: TRttiType; AOperation: TNeonOperation);
+begin
+  inherited Create(AType, AOperation);
+  FType := AType;
+
+  ParseAttributes;
+end;
+
+{ TNeonSerializerRegistry }
+
+procedure TNeonSerializerRegistry.Assign(ARegistry: TNeonSerializerRegistry);
+var
+  LInfo: TSerializerInfo;
+begin
+  for LInfo in ARegistry.FRegistryClass do
+    FRegistryClass.Add(LInfo);
+
+  // The instance cache is derived data: entries are recreated lazily from
+  // the registered serializer classes. Sharing cached instances between two
+  // registries would double-free them (both caches own their values), and
+  // merging the class list can change which serializer matches a type, so
+  // the target cache is dropped and rebuilt on demand.
+  ClearCache;
+end;
+
+procedure TNeonSerializerRegistry.Clear;
+begin
+  FRegistryClass.Clear;
+  FRegistryCacheLock.Enter;
+  try
+    FRegistryCache.Clear;
+    FInstanceCache.Clear;
+  finally
+    FRegistryCacheLock.Leave
+  end;
+end;
+
+procedure TNeonSerializerRegistry.ClearCache;
+begin
+  FRegistryCacheLock.Enter;
+  try
+    FRegistryCache.Clear;
+  finally
+    FRegistryCacheLock.Leave
+  end;
+end;
+
+constructor TNeonSerializerRegistry.Create;
+begin
+  FRegistryClass := SerializerClassRegistry.Create();
+  FRegistryCache := SerializerCacheRegistry.Create([doOwnsValues]);
+  FInstanceCache := SerializerInstanceRegistry.Create([doOwnsValues]);
+  FRegistryCacheLock := TCriticalSection.Create;
+end;
+
+destructor TNeonSerializerRegistry.Destroy;
+begin
+  FRegistryClass.Free;
+  FRegistryCache.Free;
+  FInstanceCache.Free;
+  FRegistryCacheLock.Free;
+  inherited;
+end;
+
+function TNeonSerializerRegistry.GetCount: Integer;
+begin
+  Result := FRegistryClass.Count;
+end;
+
+function TNeonSerializerRegistry.GetSerializer(AValue: TValue): TCustomSerializer;
+begin
+  Result := InternalGetSerializer(AValue.TypeInfo);
+end;
+
+function TNeonSerializerRegistry.GetSerializer<T>: TCustomSerializer;
+begin
+  Result := InternalGetSerializer(TypeInfo(T));
+end;
+
+function TNeonSerializerRegistry.GetSerializer(ATargetInfo: PTypeInfo): TCustomSerializer;
+begin
+  Result := InternalGetSerializer(ATargetInfo);
+end;
+
+function TNeonSerializerRegistry.GetSerializerInstance(ASerializerClass: TCustomSerializerClass): TCustomSerializer;
+begin
+  // Not part of the type cache: ClearCache drops resolutions by type, which
+  // registering a class can change, while the class named here never changes
+  FRegistryCacheLock.Enter;
+  try
+    if not FInstanceCache.TryGetValue(ASerializerClass, Result) then
+    begin
+      Result := ASerializerClass.Create;
+      FInstanceCache.Add(ASerializerClass, Result);
+    end;
+  finally
+    FRegistryCacheLock.Leave
+  end;
+end;
+
+function TNeonSerializerRegistry.GetSerializer(ATargetClass: TClass): TCustomSerializer;
+begin
+  Result := InternalGetSerializer(ATargetClass.ClassInfo);
+end;
+
+function TNeonSerializerRegistry.InternalGetSerializer(ATypeInfo: PTypeInfo): TCustomSerializer;
+var
+  LInfo: TSerializerInfo;
+  LClass: TCustomSerializerClass;
+  LDistanceMax: Integer;
+  LStamp: Int64;
+begin
+  // Called on every single WriteDataMember/ReadDataMember dispatch (not
+  // just once per type), so even the cache-hit fast path's lock+lookup
+  // cost is worth seeing in aggregate.
+  LStamp := TNeonLogger.ProfileBegin;
+  try
+    Result := nil;
+    LClass := nil;
+    LDistanceMax := 0;
+
+    FRegistryCacheLock.Enter;
+    try
+      if FRegistryCache.TryGetValue(ATypeInfo, Result) then
+        Exit(Result);
+    finally
+      FRegistryCacheLock.Leave
+    end;
+
+    for LInfo in FRegistryClass do
+    begin
+      if LInfo.SerializerClass.CanHandle(ATypeInfo) then
+      begin
+        if LInfo.Distance = -1 then
+        begin
+          LClass := LInfo.SerializerClass;
+          Break;
+        end
+        else
+        begin
+          if LInfo.Distance > LDistanceMax then
+          begin
+            LDistanceMax := LInfo.Distance;
+            LClass := LInfo.SerializerClass;
+          end;
+        end;
+      end;
+    end;
+
+    if Assigned(LClass) then
+    begin
+      FRegistryCacheLock.Enter;
+      try
+        if FRegistryCache.TryGetValue(ATypeInfo, Result) then
+          Exit(Result);
+
+        Result := LClass.Create;
+        FRegistryCache.Add(ATypeInfo, Result);
+      finally
+        FRegistryCacheLock.Leave
+      end;
+    end;
+  finally
+    TNeonLogger.ProfileEnd('Core:GetCustomSerializer', LStamp);
+  end;
+end;
+
+function TNeonSerializerRegistry.RegisterSerializer(ASerializerClass: TCustomSerializerClass): TNeonSerializerRegistry;
+begin
+  FRegistryClass.Add(TSerializerInfo.FromSerializer(ASerializerClass));
+  // The new class can change which serializer matches a type (e.g. a more
+  // derived class with a higher distance), so drop cached resolutions;
+  // they are recreated lazily on the next lookup
+  ClearCache;
+  Result := Self;
+end;
+
+procedure TNeonSerializerRegistry.UnregisterSerializer(ASerializerClass: TCustomSerializerClass);
+var
+  LIndex: Integer;
+begin
+  for LIndex := 0 to FRegistryClass.Count - 1 do
+    if FRegistryClass[LIndex].SerializerClass = ASerializerClass then
+    begin
+      FRegistryClass.Delete(LIndex);
+      ClearCache;
+      Break;
+    end;
+end;
+
+{ TNeonSerializerRegistry.TSerializerInfo }
+
+class function TNeonSerializerRegistry.TSerializerInfo.FromSerializer(ASerializerClass: TCustomSerializerClass): TSerializerInfo;
+begin
+  Result.SerializerClass := ASerializerClass;
+  Result.Distance := ASerializerClass.ClassDistance;
+end;
+
+
+{ TCustomSerializer }
+
+class function TCustomSerializer.NeedsInstance: Boolean;
+begin
+  Result := True;
+end;
+
+class procedure TCustomSerializer.ChangeConfig(AConfig: INeonConfiguration);
+begin
+
+end;
+
+function TCustomSerializer.SerializeSchema(AType: TRttiType; ANeonObject: TNeonRttiObject): TJSONObject;
+begin
+  // No schema contributed: the generator falls back to its structural
+  // inference, exactly as if the serializer were not registered
+  Result := nil;
+end;
+
+class function TCustomSerializer.ClassDistance: Integer;
+begin
+  Result := TRttiUtils.ClassDistanceFromRoot(GetTargetInfo);
+end;
+
+class function TCustomSerializer.ClassIs(AClass: TClass): Boolean;
+var
+  LType: TRttiType;
+begin
+  Result := False;
+
+  LType := TRttiUtils.Context.GetType(GetTargetInfo);
+  if Assigned(LType) and (LType.TypeKind = tkClass) then
+    Result := AClass.InheritsFrom(LType.AsInstance.MetaclassType);
+end;
+
+class function TCustomSerializer.GetTargetInfo: PTypeInfo;
+begin
+  Result := nil;
+end;
+
+class function TCustomSerializer.TypeInfoIs(AInfo: PTypeInfo): Boolean;
+var
+  LType: TRttiType;
+begin
+  Result := False;
+  LType := TRttiUtils.Context.GetType(AInfo);
+  if Assigned(LType) and (LType.TypeKind = tkClass) then
+    Result := ClassIs(LType.AsInstance.MetaclassType);
+end;
+
+class function TCustomSerializer.TypeInfoIsClass(AInfo: PTypeInfo): Boolean;
+var
+  LType: TRttiType;
+begin
+  Result := False;
+  LType := TRttiUtils.Context.GetType(AInfo);
+  if Assigned(LType) and (LType.TypeKind = tkClass) then
+    Result := True;
+end;
+
+{ TTypeConfigurator }
+
+constructor TTypeConfigurator.Create(AConfig: INeonConfiguration);
+begin
+  FGlobalConfig := AConfig;
+  FTypeConfigs := TList<TConfigPair>.Create;
+end;
+
+destructor TTypeConfigurator.Destroy;
+begin
+  FTypeConfigs.Free;
+  inherited;
+end;
+
+function TTypeConfigurator.CreateConfigForType(AType: TRttiType): INeonConfigurationType;
+var
+  LConfig: TNeonConfigurationType;
+begin
+  Result := GetConfigForType(AType);
+
+  if not Assigned(Result) then
+  begin
+    LConfig := TNeonConfigurationType.Create;
+    LConfig.SetGlobalConfig(FGlobalConfig);
+    FTypeConfigs.Add(TConfigPair.Create(AType, LConfig));
+    Result := LConfig;
+  end;
+end;
+
+function TTypeConfigurator.Rules<T>: INeonConfigurationType;
+var
+  LType: TRttiType;
+begin
+  LType := TRttiUtils.Context.GetType(TypeInfo(T));
+
+  if not Assigned(LType) then
+    raise ENeonException.Create(SNeonErrorUnknownGenericType);
+
+  // Create and register the configurator
+  Result := CreateConfigForType(LType);
+end;
+
+function TTypeConfigurator.ForClass<T>: INeonConfigurationType;
+begin
+  Result := Rules<T>;
+end;
+
+function TTypeConfigurator.ForRecord<T>: INeonConfigurationType;
+begin
+  Result := Rules<T>;
+end;
+
+function TTypeConfigurator.GetConfigForType(AType: TRttiType): INeonConfigurationType;
+var
+  LPair: TConfigPair;
+begin
+  Result := nil;
+  for LPair in FTypeConfigs do
+    if LPair.Key = AType then
+      Exit(LPair.Value);
+end;
+
+function TTypeConfigurator.IgnoreClass(AType: TRttiInstanceType; const AMember: string): Boolean;
+var
+  LConfig: TConfigPair;
+begin
+  for LConfig in FTypeConfigs do
+    if LConfig.Key.IsInstance then
+      if AType.MetaclassType.InheritsFrom(LConfig.Key.AsInstance.MetaclassType) then
+        if (LConfig.Value as TNeonConfigurationType).IgnoreMember(AMember) then
+          Exit(True);
+
+  Result := False;
+end;
+
+function TTypeConfigurator.IgnoreRecord(AType: TRttiRecordType; const AMember: string): Boolean;
+var
+  LConfig: TConfigPair;
+begin
+  for LConfig in FTypeConfigs do
+    if AType = LConfig.Key then
+      if (LConfig.Value as TNeonConfigurationType).IgnoreMember(AMember) then
+        Exit(True);
+
+  Result := False;
+end;
+
+{ TNeonConfigurationType }
+
+function TNeonConfigurationType.AddIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType;
+begin
+  FIgnoreMembers := FIgnoreMembers + AMemberList;
+  InvalidateGlobalConfig;
+  Result := Self;
+end;
+
+procedure TNeonConfigurationType.InvalidateGlobalConfig;
+begin
+  if Assigned(FGlobalConfig) then
+    (FGlobalConfig as TNeonConfiguration).ClearRttiCache;
+end;
+
+function TNeonConfigurationType.SetGlobalConfig(AConfig: INeonConfiguration): INeonConfigurationType;
+begin
+  FGlobalConfig := AConfig;
+  Result := Self;
+end;
+
+function TNeonConfigurationType.SetIgnoreMembers(const AMemberList: TArray<string>): INeonConfigurationType;
+begin
+  FIgnoreMembers := AMemberList;
+  InvalidateGlobalConfig;
+  Result := Self;
+end;
+
+function TNeonConfigurationType.ApplyConfig: INeonConfiguration;
+begin
+  Result := FGlobalConfig;
+end;
+
+function TNeonConfigurationType.IgnoreMember(const AMember: string): Boolean;
+var
+  LMember: string;
+begin
+  for LMember in FIgnoreMembers do
+    if SameText(AMember, LMember) then
+      Exit(True);
+
+  Result := False;
+end;
+
+{ TTypeInfoUtils }
+
+class function TTypeInfoUtils.EnumToString(ATypeInfo: PTypeInfo; AValue: Integer): string;
+var
+  LEnumType: TRttiType;
+  LAttribute: NeonEnumNamesAttribute;
+  LNeonEnumNames: TArray<string>;
+  LTypeData: PTypeData;
+begin
+  Result := '';
+
+  // Get NeonEnumNames directly from AValue.TypeInfo
+  LEnumType := TRttiUtils.Context.GetType(ATypeInfo);
+  LAttribute := TRttiUtils.FindAttribute<NeonEnumNamesAttribute>(LEnumType);
+  if Assigned(LAttribute) then
+    LNeonEnumNames := (LAttribute as NeonEnumNamesAttribute).Names
+  else
+    LNeonEnumNames := [];
+
+
+  LTypeData := GetTypeData(ATypeInfo);
+  if (AValue >= LTypeData.MinValue) and (AValue <= LTypeData.MaxValue) then
+  begin
+    Result := GetEnumName(ATypeInfo, AValue);
+
+    if Length(LNeonEnumNames) > 0 then
+    begin
+      if (AValue >= Low(LNeonEnumNames)) and
+         (AValue <= High(LNeonEnumNames)) then
+        Result := LNeonEnumNames[AValue]
+    end;
+  end
+  else
+    raise ENeonException.CreateFmt(SNeonErrorEnumValueF1, [AValue]);
+end;
+
+class function TTypeInfoUtils.EnumToJSONName(ATypeInfo: PTypeInfo; AValue:
+    Integer; ACase: TNeonCase; ACaseFunc: TCaseFunc): string;
+var
+  LEnumType: TRttiType;
+  LAttribute: NeonEnumNamesAttribute;
+begin
+  // An explicit [NeonEnumNames] entry is the JSON name the user chose: it is
+  // used verbatim and wins over the case conversion, the way [NeonProperty]
+  // wins for a member name. Every other member follows the configured case.
+  // One place decides the name, so the writer, the reader and the schema
+  // generator cannot drift apart
+  LEnumType := TRttiUtils.Context.GetType(ATypeInfo);
+  LAttribute := TRttiUtils.FindAttribute<NeonEnumNamesAttribute>(LEnumType);
+  if Assigned(LAttribute) and (AValue >= 0) and (AValue < Length(LAttribute.Names)) then
+    Exit(LAttribute.Names[AValue]);
+
+  Result := TCaseAlgorithm.ConvertCase(EnumToString(ATypeInfo, AValue), ACase, ACaseFunc);
+end;
+
+end.
