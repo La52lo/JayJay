@@ -30,8 +30,6 @@ type
     ThresholdOpen      : Double;
     ThresholdShort     : Double;
     InitialWait        : Double;    { s,  default 1.0    }
-    function    ToJSON: TJSONObject;
-    procedure   FromJSON(AJsonObj: TJSONObject);
   end;
 
   TAnnealConfigArray =  TArray<TAnnealConfig>;

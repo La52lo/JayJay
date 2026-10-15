@@ -4,8 +4,11 @@ unit DeviceManagerUnit;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.JSON,
-   System.Generics.Collections;
+  Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.Rtti,
+  System.JSON,
+  Neon.Core.Types,
+  Neon.Core.Persistence.JSON,
+  System.Generics.Collections;
 
 type
 
@@ -71,7 +74,6 @@ type
   public
     property Config: TConfig read FConfig write FConfig;
     property Result: TData read FData write FData;
-    procedure SetResult(const AResult: THardwareResult); override;
   end;
 
   TAnnealTask = class(TTypedHardwareTask<TAnnealConfig,TAnnealResult>)
@@ -113,7 +115,7 @@ type
   { TDeviceManager - Manages device, task, and junction information }
   TDeviceManager = class
   private
-    FCurrentDevice: TDeviceInfo;
+    FDeviceInfo: TDeviceInfo;
     FTasks: TObjectList;
     FIsOperationRunning: Boolean;
   public
@@ -131,7 +133,7 @@ type
 
     procedure SetOperationRunning(ARunning: Boolean);
     
-    property CurrentDevice: TDeviceInfo read FCurrentDevice;
+    property CurrentDevice: TDeviceInfo read FDeviceInfo;
     property IsOperationRunning: Boolean read FIsOperationRunning;
   end;
 {
@@ -379,38 +381,30 @@ end;
 constructor TDeviceManager.Create;
 begin
   inherited Create;
-  FCurrentDevice := nil;
+  FDeviceInfo := nil;
   FTasks := TObjectList.Create(True);
   FIsOperationRunning := False;
 end;
 
 destructor TDeviceManager.Destroy;
 begin
-  if Assigned(FCurrentDevice) then
-    FCurrentDevice.Free;
+  if Assigned(FDeviceInfo) then
+    FDeviceInfo.Free;
   FTasks.Free;
   inherited;
 end;
 
 procedure TDeviceManager.CreateNewDevice(const AName: string);
 begin
-  if Assigned(FCurrentDevice) then
-    FCurrentDevice.Free;
-  FCurrentDevice := TDeviceInfo.Create(AName);
+  if Assigned(FDeviceInfo) then
+    FDeviceInfo.Free;
+  FDeviceInfo := TDeviceInfo.Create(AName);
   FTasks.Clear;
   FIsOperationRunning := False;
 end;
 
 procedure TDeviceManager.LoadDevice(const AFilePath: string);
 var
-  JsonObject: TJSONObject;
-  TasksArray: TJSONArray;
-  i: Integer;
-  TaskObject: TJSONObject;
-  TaskType: TNodeType;
-  TaskName: string;
-  DeviceName: string;
-  CreatedAt, ModifiedAt: TDateTime;
   JsonText: string;
   StringList: TStringList;
 begin
@@ -427,62 +421,7 @@ begin
     finally
       StringList.Free;
     end;
-
-    JsonObject := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
-    try
-      if not Assigned(JsonObject) then
-      begin
-        raise Exception.Create('Invalid JSON format in device file');
-      end;
-
-      { Load device metadata }
-      DeviceName := JsonObject.GetValue<string>('DeviceName', 'Unnamed Device');
-      CreatedAt := StrToDateTime(JsonObject.GetValue<string>('CreatedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
-      ModifiedAt := StrToDateTime(JsonObject.GetValue<string>('ModifiedAt', FormatDateTime('yyyy-mm-dd hh:mm:ss', Now)));
-
-      { Create new device }
-      if Assigned(FCurrentDevice) then
-        FCurrentDevice.Free;
-      FCurrentDevice := TDeviceInfo.Create(DeviceName);
-      FCurrentDevice.FCreatedAt := CreatedAt;
-      FCurrentDevice.FModifiedAt := ModifiedAt;
-
-      { Clear existing tasks }
-      FTasks.Clear;
-
-      { Load tasks }
-      if Assigned(JsonObject.GetValue('Tasks')) then
-      begin
-        TasksArray := JsonObject.GetValue('Tasks') as TJSONArray;
-        if Assigned(TasksArray) then
-        begin
-          for i := 0 to TasksArray.Count - 1 do
-          begin
-            TaskObject := TasksArray.Items[i] as TJSONObject;
-            TaskName := TaskObject.GetValue<string>('TaskName', 'Task' + IntToStr(i));
-            TaskType := TNodeType(TaskObject.GetValue<Integer>('TaskType', Integer(ntDevice)));
-
-            { Reconstruct tasks based on type }
-            case TaskType of
-              ntAnneal:
-                FTasks.Add(TAnnealTask.Create(TaskName, TaskType));
-              ntBatchAnneal:
-                FTasks.Add(TBatchAnnealTask.Create(TaskName, TaskType));
-              ntProbe:
-                FTasks.Add(TProbeTask.Create(TaskName, TaskType));
-              ntBatchProbe:
-                FTasks.Add(TBatchProbeTask.Create(TaskName, TaskType));
-            end;
-          end;
-        end;
-      end;
-
-      FIsOperationRunning := False;
-
-    finally
-      JsonObject.Free;
-    end;
-
+    TNeon.JSONToObject(Self,JsonText);
   except
     on E: Exception do
     begin
@@ -493,47 +432,28 @@ end;
 
 procedure TDeviceManager.SaveDevice(const AFilePath: string);
 var
-  DeviceJSON: TJSONObject;
-  TasksArray: TJSONArray;
-  i: Integer;
-  TaskObject: TJSONValue;
-  Task: THardwareTask;
+  DeviceJSON: TJSONValue;
   StringList: TStringList;
 begin
   try
-    if not Assigned(FCurrentDevice) then
+    if not Assigned(FDeviceInfo) then
     begin
       raise Exception.Create('No device loaded. Cannot save.');
     end;
 
     { Create root JSON object }
-    DeviceJSON := TJSONObject.Create;
+    DeviceJSON := TNeon.ValueToJSON(TValue.From<TDeviceManager>(Self));
     try
       { Save device metadata }
-      DeviceJSON.AddPair('DeviceName', TJSONString.Create(FCurrentDevice.FName));
-      DeviceJSON.AddPair('CreatedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FCreatedAt)));
-      DeviceJSON.AddPair('ModifiedAt', TJSONString.Create(FormatDateTime('yyyy-mm-dd hh:mm:ss', FCurrentDevice.FModifiedAt)));
-
-      { Create tasks array }
-      TasksArray := TJSONArray.Create;
-      DeviceJSON.AddPair('Tasks', TasksArray);
-
-      { Save each task }
-      for i := 0 to FTasks.Count - 1 do
-      begin
-        Task := THardwareTask(FTasks[i]);
-        TaskObject := Task.ToJSON;
-        TasksArray.AddElement(TaskObject);
-      end;
 
       { Write to file }
       StringList := TStringList.Create;
       try
-        StringList.Text := DeviceJSON.ToJSON;
+        StringList.Text := TNeon.Print(DeviceJSON, True);
         StringList.SaveToFile(AFilePath);
       finally
         StringList.Free;
-      end;
+      end
 
     finally
       DeviceJSON.Free;

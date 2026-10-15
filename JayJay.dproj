@@ -94,11 +94,13 @@
         <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
         <DCC_RangeChecking>true</DCC_RangeChecking>
         <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
+        <DCC_UnitSearchPath>C:\Users\B1500\JayJay\src\neon\Source;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
         <AppDPIAwarenessMode>PerMonitorV2</AppDPIAwarenessMode>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
+        <DCC_UnitSearchPath>C:\Users\B1500\JayJay\src\neon;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">
