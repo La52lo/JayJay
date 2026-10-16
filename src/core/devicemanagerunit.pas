@@ -346,7 +346,7 @@ begin
      SetLength(Result,1);
      Result[High(Result)].Name := 'Junction';
      Result[High(Result)].Index := 1;
-     Result[High(Result)].NodeType := TNodeType.ntAnneal;
+     Result[High(Result)].NodeType := TNodeType.ntAnnealedJunction;
     end else
       SetLength(Result,0);
 
@@ -359,7 +359,7 @@ begin
      SetLength(Result,1);
      Result[High(Result)].Name := 'Junction';
      Result[High(Result)].Index := 1;
-     Result[High(Result)].NodeType := TNodeType.ntProbe;
+     Result[High(Result)].NodeType := TNodeType.ntProbedJunction;
    end else
       SetLength(Result,0);
 end;
@@ -425,9 +425,7 @@ procedure TDeviceManager.LoadDevice(const AFilePath: string);
 var
   JsonText: string;
   StringList: TStringList;
-  TempDevice: TDeviceManager;
   Config: INeonConfiguration;
-  z: integer;
   LJSON: TJSONObject;
   LTasksJSON: TJSONArray;
   LTaskJSON: TJSONValue;
@@ -437,10 +435,8 @@ var
 
 begin
   Config := TNeonConfiguration.Default
-    .SetMembers([TNeonMembers.Properties])
-    .SetVisibility([TMemberVisibility.mvPrivate])
-    .SetIgnoreMembers(['Tasks']);
-  TempDevice := TDeviceManager.Create();
+    .SetMembers([TNeonMembers.Fields,TNeonMembers.Standard])
+    .SetIgnoreMembers(['FTasks']);
   Tasks := TObjectList<THardwareTask>.Create(True);
   try
     if not FileExists(AFilePath) then
@@ -455,62 +451,53 @@ begin
     finally
       StringList.Free;
     end;
-    z := GetEnumValue(TypeInfo(TNodeType), 'ntAnneal');
-    TempDevice.CreateNewDevice('placeholdere');
-    TNeon.JSONToObject(TempDevice,JsonText,Config);
-
     TNeon.JSONToObject(Self,JsonText);
 
-        // Deserialize the non-polymorphic properties.
-        // Exclude Tasks from this pass, or deserialize them separately.
-        // See the note below about Neon member configuration.
-        LJSON := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
-        LTasksJSON := LJSON.GetValue<TJSONArray>('Tasks');
-        if LTasksJSON = nil then
-          Exit;
+    // Deserialize the non-polymorphic properties.
+    // Exclude Tasks from this pass, or deserialize them separately.
+    // See the note below about Neon member configuration.
+    LJSON := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
+    LTasksJSON := LJSON.GetValue<TJSONArray>('Tasks');
+    if LTasksJSON = nil then
+      Exit;
 
-        FTasks.Clear;
+    FTasks.Clear;
 
-        for LTaskJSON in LTasksJSON do
-        begin
-          if not (LTaskJSON is TJSONObject) then
-            Continue;
+    for LTaskJSON in LTasksJSON do
+    begin
+      if not (LTaskJSON is TJSONObject) then
+        Continue;
 
-          LTaskTypeJSON := TJSONObject(LTaskJSON).GetValue('TaskType');
-          if LTaskTypeJSON = nil then
-            raise Exception.Create('TaskType is missing');
+      LTaskTypeJSON := TJSONObject(LTaskJSON).GetValue('TaskType');
+      if LTaskTypeJSON = nil then
+        raise Exception.Create('TaskType is missing');
 
-          LTaskType := TNodeType(GetEnumValue(
-            TypeInfo(TNodeType), LTaskTypeJSON.Value));
+      LTaskType := TNodeType(GetEnumValue(
+        TypeInfo(TNodeType), LTaskTypeJSON.Value));
 
-          case LTaskType of
-                 TNodeType.ntAnneal:
-                    begin
-                      //LTask := TAnnealTask.Create('',LTaskType)
-                      LTask := TNeon.JSONToObject<TAnnealTask>(LTaskJSON);
-                    end;
-                   TNodeType.ntBatchAnneal:
-                    begin
-                      //LTask := TBatchAnnealTask.Create('',LTaskType)
-                      LTask := TNeon.JSONToObject<TBatchAnnealTask>(LTaskJSON);
-                    end;
-                    TNodeType.ntProbe:
-                    begin
-                      //LTask := TProbeTask.Create('',LTaskType)
-                      LTask := TNeon.JSONToObject<TProbeTask>(LTaskJSON);
-                    end;
-                    TNodeType.ntBatchProbe:
-                    begin
-                      //LTask := TBatchProbeTask.Create('',LTaskType)
-                      LTask := TNeon.JSONToObject<TBatchProbeTask>(LTaskJSON);
-                    end
-          else
-            raise Exception.CreateFmt(
-              'Unsupported task type: %s',
-              [LTaskTypeJSON.Value]);
+      case LTaskType of
+             TNodeType.ntAnneal:
+                begin
+                  LTask := TNeon.JSONToObject<TAnnealTask>(LTaskJSON);
+                end;
+               TNodeType.ntBatchAnneal:
+                begin
+                  LTask := TNeon.JSONToObject<TBatchAnnealTask>(LTaskJSON);
+                end;
+                TNodeType.ntProbe:
+                begin
+                  LTask := TNeon.JSONToObject<TProbeTask>(LTaskJSON);
+                end;
+                TNodeType.ntBatchProbe:
+                begin
+                  LTask := TNeon.JSONToObject<TBatchProbeTask>(LTaskJSON);
+                end
+      else
+        raise Exception.CreateFmt(
+          'Unsupported task type: %s',
+          [LTaskTypeJSON.Value]);
       end;
         try
-          //TNeon.JSONToObject(LTask, LTaskJSON.Value);
           FTasks.Add(LTask);
         except
           LTask.Free;
@@ -531,12 +518,11 @@ procedure TDeviceManager.SaveDevice(const AFilePath: string);
 var
   DeviceJSON: TJSONValue;
   StringList: TStringList;
-  Config: INeonConfiguration;
+  LConfig: INeonConfiguration;
 
 begin
-  Config := TNeonConfiguration.Default
-    .SetMembers([TNeonMembers.Properties])
-    .SetVisibility([TMemberVisibility.mvPrivate]);
+  LConfig := TNeonConfiguration.Default
+    .SetMembers([TNeonMembers.Fields,TNeonMembers.Standard]);
   try
     if not Assigned(FDeviceInfo) then
     begin
@@ -544,7 +530,7 @@ begin
     end;
 
     { Create root JSON object }
-    DeviceJSON := TNeon.ValueToJSON(TValue.From<TDeviceManager>(Self));
+    DeviceJSON := TNeon.ValueToJSON(TValue.From<TDeviceManager>(Self),LConfig);
     try
       { Save device metadata }
 
@@ -600,9 +586,7 @@ begin
 end;
 
 initialization
- { DeviceManager := TDeviceManager.Create;}
 
 finalization
-{  DeviceManager.Free; }
 
 end.

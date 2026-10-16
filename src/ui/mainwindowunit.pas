@@ -148,8 +148,8 @@ const
     (NodeType: TNodeType.ntAnnealResult; ImageIndex: 4; DisplayName: 'Result'),
     (NodeType: TNodeType.ntProbeConfig; ImageIndex: 3; DisplayName: 'Config'),
     (NodeType: TNodeType.ntProbeResult; ImageIndex: 4; DisplayName: 'Result'),
-    (NodeType: TNodeType.ntAnnealedJunction; ImageIndex: 6; DisplayName: 'Junction'),
-    (NodeType: TNodeType.ntProbedJunction; ImageIndex: 7; DisplayName: 'Junction')
+    (NodeType: TNodeType.ntAnnealedJunction; ImageIndex: 7; DisplayName: 'Junction'),
+    (NodeType: TNodeType.ntProbedJunction; ImageIndex: 6; DisplayName: 'Junction')
   );
 
 var
@@ -733,16 +733,16 @@ HardwareTask : THardwareTask;
 Node         : TTreeNode;
 
 begin
-  Node := DeviceTreeView.Selected;
-  if  Node.Level = 0 then
-    begin
-      RunSingleButton.Visible := False;
-      RunBatchButton.Visible := False;
-      exit;
-    end;
+
   if (DeviceTreeView.Selected <> nil) and (DeviceTreeView.Selected.Data <> nil) then
   begin
-
+    Node := DeviceTreeView.Selected;
+    if  Node.Level = 0 then
+      begin
+        RunSingleButton.Visible := False;
+        RunBatchButton.Visible := False;
+        exit;
+      end;
     HardwareTask :=  THardwareTask(Node.Data);
 
 
