@@ -15,12 +15,11 @@ uses
 type
 
   { TMainWindowForm }
+  TOperationManager = Record
+    IsTaskRunning: Boolean;
+    ActiveTask: THardwareTask;
+    end;
 
-  TNodeToTaskMap = TDictionary<TTreeNode,THardwareTask>;
-  TNodeSpecifier = class
-  public
-    FNodeType: TNodeType;
-  end;
   TMainWindowForm = class(TForm,IMeasurementObserver)
     IconList: TImageList;
     MainMenu: TMainMenu;
@@ -71,15 +70,12 @@ type
     procedure DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
       var S: string);
   private
-    FAddTask: TTreeNode;
     FDeviceNode: TTreeNode;
     FSetupStatus: TSetupStatus;
     FCurrentThread: THardwareThread;
     FSelectedTaskNode: TTreeNode;
-    {FActiveNode: TTreeNode;}
-    FActiveTask: THardwareTask;
-    IsTaskRunning: Boolean;
     FDeviceManager: TDeviceManager;
+    FOperationManager: TOperationManager;
     FJunctionNodeList: TObjectList<TJunctionNodeData>;
     Chart        : TChart4D;
     function GetImageIndexForNodeType(ANodeType: TNodeType): Integer;
@@ -169,6 +165,7 @@ begin
   DeviceTreeView.Items.Clear;
   FCurrentThread := nil;
   FSelectedTaskNode := nil;
+  FOperationManager.IsTaskRunning:=False;
   {FNodeToJunctionMap:= TTreeArrayMapper.Create; }
   
   { Enable inline editing }
@@ -183,20 +180,18 @@ begin
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
-  Chart.Plot.Title := 'Almost everyone is online';
-  Chart.Plot.Subtitle := 'Share of the population using the internet, 2020';
-  Chart.Plot.Source := 'Source: World Bank';
-  {Chart.Plot.Categories := ['Sweden', 'Spain', 'Belgium', 'Netherlands'];}
-  Chart.Plot.AddSeries('2020', [94.5, 93.2, 91.5, 91.3]);
+  Chart.Plot.Title := 'Junction Data';
+  Chart.Plot.Subtitle := 'From Parameter Analyzer';
+  //Chart.Plot.Source := 'Source: World Bank';
+  Chart.Plot.Categories := ['1', '2'];
+  Chart.Plot.AddSeries('2020', [0,100]);
   {Chart.Plot.AddLineSeries();}
 
-  Chart.SaveToPng('online.png');
 
   { Create default device }
   FSetupStatus[0].Label_ := 'Analyzer';
   FSetupStatus[1].Label_ := 'Prober';
   FSetupStatus[2].Label_ := 'Heater';
-  {FNodeToTaskMap := TNodeToTaskMap.Create;}
   FDeviceManager := TDeviceManager.Create;
   CreateDefaultDevice;
 end;
@@ -319,7 +314,7 @@ procedure TMainWindowForm.NewDeviceMenuItemClick(Sender: TObject);
 var
   DeviceName: string;
 begin
-  if FDeviceManager.IsOperationRunning then
+  if FOperationManager.IsTaskRunning then
   begin
     ShowMessage('Cannot create device while operation is running.');
     Exit;
@@ -336,11 +331,6 @@ begin
 
     { Add metadata subnodes }
     AddMetadataNodes(FDeviceNode, FDeviceManager.DeviceInfo.CreatedAt, FDeviceManager.DeviceInfo.ModifiedAt);
-
-    FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
-    FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
-    {FAddTask.Data := Pointer(PtrInt(AddTaskUniqueID));}
-
     FDeviceNode.Expanded := True;
     PopulateDeviceInfo;
   end;
@@ -369,7 +359,7 @@ procedure TMainWindowForm.OpenDeviceMenuItemClick(Sender: TObject);
 var
   OpenDialog: TOpenDialog;
 begin
-  if FDeviceManager.IsOperationRunning then
+  if FOperationManager.IsTaskRunning then
   begin
     ShowMessage('Cannot open device while operation is running.');
     Exit;
@@ -454,7 +444,7 @@ begin
     Exit;
   end;
 
-  if FDeviceManager.IsOperationRunning then
+  if FOperationManager.IsTaskRunning then
   begin
     ShowMessage('An operation is already running.');
     Exit;
@@ -464,7 +454,8 @@ begin
   if (SelectedNode.Parent <> nil) and (SelectedNode.Parent = FDeviceNode) then
   begin
     ShowMessage('Running task: ' + SelectedNode.Text);
-    FActiveTask := THardwareTask(SelectedNode.Data);
+    FOperationManager.ActiveTask := THardwareTask(SelectedNode.Data);
+    FOperationManager.IsTaskRunning:=True;
     DispatchTask(SelectedNode.Data);
     { TODO: Implement actual task execution }
     {FCurrentThread.}
@@ -482,7 +473,7 @@ begin
     Exit;
   end;
 
-  if FDeviceManager.IsOperationRunning then
+  if FOperationManager.IsTaskRunning then
   begin
     ShowMessage('An operation is already running.');
     Exit;
@@ -491,7 +482,8 @@ begin
   if (SelectedNode.Parent <> nil) and (SelectedNode.Parent = FDeviceNode) then
   begin
     ShowMessage('Running task: ' + SelectedNode.Text);
-    FActiveTask := THardwareTask(SelectedNode.Data);
+    FOperationManager.ActiveTask := THardwareTask(SelectedNode.Data);
+    FOperationManager.IsTaskRunning:=True;
     DispatchTask(SelectedNode.Data);
     { TODO: Implement actual task execution }
     {FCurrentThread.}
@@ -914,7 +906,9 @@ procedure TMainWindowForm.TaskStarted();
 procedure TMainWindowForm.TaskFinished(
   Result: THardwareResult);
  begin
-   FActiveTask.SetResult(Result);
+   FOperationManager.ActiveTask.SetResult(Result);
+   FOperationManager.IsTaskRunning:=False;
+   FOperationManager.ActiveTask := nil;
    RefreshTreeView;
 
  end;

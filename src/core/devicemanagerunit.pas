@@ -8,8 +8,7 @@ uses
   System.JSON,System.TypInfo,
   Neon.Core.Types,Neon.Core.Persistence,
   Neon.Core.Persistence.JSON,Neon.Core.Persistence.JSON.Schema,
-  Neon.Core.Attributes,        // needs Data.DB
-  Neon.Core.Serializers.Nullables,
+  Neon.Core.Attributes,
   System.Generics.Collections;
 
 type
@@ -120,25 +119,17 @@ type
   private
     FDeviceInfo: TDeviceInfo;
     FTasks: TObjectList<THardwareTask>;
-    FIsOperationRunning: Boolean;
   public
     constructor Create;
     destructor Destroy; override;
-
     procedure CreateNewDevice(const AName: string);
     procedure LoadDevice(const AFilePath: string);
     procedure SaveDevice(const AFilePath: string);
-
     procedure AddTask(Task: THardwareTask;const AName: string; ATaskType: TNodeType);
     procedure RemoveTask(ATaskIndex: Integer);
     function GetTaskCount: Integer;
     function GetTask(AIndex: Integer): THardwareTask;
-
-    procedure SetOperationRunning(ARunning: Boolean);
-
     property DeviceInfo: TDeviceInfo read FDeviceInfo write FDeviceInfo;
-
-    property IsOperationRunning: Boolean read FIsOperationRunning write FIsOperationRunning;
     property Tasks:  TObjectList<THardwareTask> read FTasks write FTasks;
   end;
 {
@@ -401,7 +392,6 @@ begin
   inherited Create;
   FDeviceInfo := nil;
   FTasks := TObjectList<THardwareTask>.Create(True);
-  FIsOperationRunning := False;
 end;
 
 destructor TDeviceManager.Destroy;
@@ -418,14 +408,13 @@ begin
     FDeviceInfo.Free;
   FDeviceInfo := TDeviceInfo.Create(AName);
   FTasks.Clear;
-  FIsOperationRunning := False;
 end;
 
 procedure TDeviceManager.LoadDevice(const AFilePath: string);
 var
   JsonText: string;
   StringList: TStringList;
-  Config: INeonConfiguration;
+  LConfig: INeonConfiguration;
   LJSON: TJSONObject;
   LTasksJSON: TJSONArray;
   LTaskJSON: TJSONValue;
@@ -434,7 +423,7 @@ var
   LTask: THardwareTask;
 
 begin
-  Config := TNeonConfiguration.Default
+  LConfig := TNeonConfiguration.Default
     .SetMembers([TNeonMembers.Fields,TNeonMembers.Standard])
     .SetIgnoreMembers(['FTasks']);
   Tasks := TObjectList<THardwareTask>.Create(True);
@@ -451,7 +440,7 @@ begin
     finally
       StringList.Free;
     end;
-    TNeon.JSONToObject(Self,JsonText);
+    TNeon.JSONToObject(Self,JsonText,LConfig);
 
     // Deserialize the non-polymorphic properties.
     // Exclude Tasks from this pass, or deserialize them separately.
@@ -578,11 +567,6 @@ begin
     Result := THardwareTask(FTasks[AIndex])
   else
     Result := nil;
-end;
-
-procedure TDeviceManager.SetOperationRunning(ARunning: Boolean);
-begin
-  FIsOperationRunning := ARunning;
 end;
 
 initialization
