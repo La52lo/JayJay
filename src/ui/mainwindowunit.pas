@@ -138,18 +138,18 @@ type
 const
   AddTaskUniqueID: Integer = 42;
   NODETYPE_MAP: array[TNodeType] of TNodeTypeDefinition = (
-    (NodeType: ntDevice; ImageIndex: 0; DisplayName: 'Device'),
-    (NodeType: ntAddTask; ImageIndex: 0; DisplayName: 'Add Task...'),
-    (NodeType: ntAnneal; ImageIndex: 1; DisplayName: 'Anneal'),
-    (NodeType: ntBatchAnneal; ImageIndex: 1; DisplayName: 'Batch Anneal'),
-    (NodeType: ntProbe; ImageIndex: 2; DisplayName: 'Resistance'),
-    (NodeType: ntBatchProbe; ImageIndex: 2; DisplayName: 'Batch Probing'),
-    (NodeType: ntAnnealConfig; ImageIndex: 3; DisplayName: 'Config'),
-    (NodeType: ntAnnealResult; ImageIndex: 4; DisplayName: 'Result'),
-    (NodeType: ntProbeConfig; ImageIndex: 3; DisplayName: 'Config'),
-    (NodeType: ntProbeResult; ImageIndex: 4; DisplayName: 'Result'),
-    (NodeType: ntAnnealedJunction; ImageIndex: 6; DisplayName: 'Junction'),
-    (NodeType: ntProbedJunction; ImageIndex: 7; DisplayName: 'Junction')
+    (NodeType: TNodeType.ntDevice; ImageIndex: 0; DisplayName: 'Device'),
+    (NodeType: TNodeType.ntAddTask; ImageIndex: 0; DisplayName: 'Add Task...'),
+    (NodeType: TNodeType.ntAnneal; ImageIndex: 1; DisplayName: 'Anneal'),
+    (NodeType: TNodeType.ntBatchAnneal; ImageIndex: 1; DisplayName: 'Batch Anneal'),
+    (NodeType: TNodeType.ntProbe; ImageIndex: 2; DisplayName: 'Resistance'),
+    (NodeType: TNodeType.ntBatchProbe; ImageIndex: 2; DisplayName: 'Batch Probing'),
+    (NodeType: TNodeType.ntAnnealConfig; ImageIndex: 3; DisplayName: 'Config'),
+    (NodeType: TNodeType.ntAnnealResult; ImageIndex: 4; DisplayName: 'Result'),
+    (NodeType: TNodeType.ntProbeConfig; ImageIndex: 3; DisplayName: 'Config'),
+    (NodeType: TNodeType.ntProbeResult; ImageIndex: 4; DisplayName: 'Result'),
+    (NodeType: TNodeType.ntAnnealedJunction; ImageIndex: 6; DisplayName: 'Junction'),
+    (NodeType: TNodeType.ntProbedJunction; ImageIndex: 7; DisplayName: 'Junction')
   );
 
 var
@@ -210,19 +210,19 @@ end;
 procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
 begin
    case (THardwareTask(TaskPointer)).TaskType of
-       ntProbe:
+       TNodeType.ntProbe:
          begin
          FCurrentThread.Probe((TProbeTask(TaskPointer)).Config);
          end;
-       ntAnneal:
+       TNodeType.ntAnneal:
          begin
          FCurrentThread.Anneal((TAnnealTask(TaskPointer)).Config);
          end;
-       ntBatchAnneal:
+       TNodeType.ntBatchAnneal:
          begin
          FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Config);
          end;
-       ntBatchProbe:
+       TNodeType.ntBatchProbe:
          begin
          FCurrentThread.ProbeBatch((TBatchProbeTask(TaskPointer)).Config);
          end;
@@ -233,11 +233,11 @@ procedure TMainWindowForm.PopulateDeviceInfo;
 var
   InfoText: string;
 begin
-  if FDeviceManager.CurrentDevice <> nil then
+  if FDeviceManager.DeviceInfo <> nil then
   begin
     InfoText := Format('Device: %s | Created: %s',
-      [FDeviceManager.CurrentDevice.Name,
-       FormatDateTime('yyyy-mm-dd hh:nn:ss', FDeviceManager.CurrentDevice.CreatedAt)]);
+      [FDeviceManager.DeviceInfo.Name,
+       FormatDateTime('yyyy-mm-dd hh:nn:ss', FDeviceManager.DeviceInfo.CreatedAt)]);
     EquipmentStatusBar.Panels[0].Text := InfoText;
   end;
 end;
@@ -332,10 +332,10 @@ begin
     FDeviceNode := DeviceTreeView.Items.Add(nil, DeviceName);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
-    FDeviceNode.Data := FDeviceManager.CurrentDevice;
+    FDeviceNode.Data := FDeviceManager.DeviceInfo;
 
     { Add metadata subnodes }
-    AddMetadataNodes(FDeviceNode, FDeviceManager.CurrentDevice.CreatedAt, FDeviceManager.CurrentDevice.ModifiedAt);
+    AddMetadataNodes(FDeviceNode, FDeviceManager.DeviceInfo.CreatedAt, FDeviceManager.DeviceInfo.ModifiedAt);
 
     FAddTask := DeviceTreeView.Items.AddChild(FDeviceNode, 'Add Task...');
     FAddTask.ImageIndex := GetImageIndexForNodeType(ntAddTask);
@@ -377,7 +377,7 @@ begin
 
   OpenDialog := TOpenDialog.Create(nil);
   try
-    OpenDialog.Filter := 'Device files (*.dvc)|*.dvc';
+    OpenDialog.Filter := 'Device files (*.json)|*.json';
     if OpenDialog.Execute then
     begin
       FDeviceManager.LoadDevice(OpenDialog.FileName);
@@ -394,7 +394,8 @@ var
 begin
   SaveDialog := TSaveDialog.Create(nil);
   try
-    SaveDialog.Filter := 'Device files (*.dvc)|*.dvc';
+    SaveDialog.Filter := 'Device files (*.json)|*.json';
+    SaveDialog.DefaultExt := 'json';
     if SaveDialog.Execute then
       FDeviceManager.SaveDevice(SaveDialog.FileName);
   finally
@@ -412,32 +413,33 @@ begin
   if TaskSelectDialog.ShowTaskSelectDialog(TaskType) then
   begin
     case TaskType of
-      ntAnneal:
+      TNodeType.ntAnneal:
       begin
         NewHardwareTask := TAnnealTask.Create('',TaskType)
       end;
-      ntBatchAnneal:
+     TNodeType.ntBatchAnneal:
       begin
         NewHardwareTask := TBatchAnnealTask.Create('',TaskType)
       end;
-      ntProbe:
+      TNodeType.ntProbe:
       begin
         NewHardwareTask := TProbeTask.Create('',TaskType)
       end;
-      ntBatchProbe:
+      TNodeType.ntBatchProbe:
       begin
         NewHardwareTask := TBatchProbeTask.Create('',TaskType)
       end else exit;
     end;
-    TaskName := NewHardwareTask.FDisplayName;
-    NewTaskNode := AddNode(FDeviceNode, TaskType, TaskName);
-    NewTaskNode.Data := NewHardwareTask;
+    TaskName := NewHardwareTask.DisplayName;
+    //NewTaskNode := AddNode(FDeviceNode, TaskType, TaskName);
+    //NewTaskNode.Data := NewHardwareTask;
     
     { Add metadata subnodes to task }
-    AddMetadataNodes(NewTaskNode, NewHardwareTask.CreatedAt, NewHardwareTask.ExecutedAt);
+    //AddMetadataNodes(NewTaskNode, NewHardwareTask.CreatedAt, NewHardwareTask.ExecutedAt);
     
     FDeviceManager.AddTask(NewHardwareTask,TaskName, TaskType);
     FSelectedTaskNode := NewTaskNode;
+    RefreshTreeView;
   end;
 end;
 
@@ -744,7 +746,7 @@ begin
     HardwareTask :=  THardwareTask(Node.Data);
 
 
-    if (HardwareTask.TaskType = ntAnneal) or (HardwareTask.TaskType = ntProbe) then
+    if (HardwareTask.TaskType = TNodeType.ntAnneal) or (HardwareTask.TaskType = TNodeType.ntProbe) then
     begin
       RunSingleButton.Visible := True;
       RunBatchButton.Visible := False;
@@ -802,7 +804,7 @@ begin
     if Task <> nil then
     begin
       Task.Name := S;
-      Task.FDisplayName := S;
+      Task.DisplayName := S;
       {FDeviceManager.SaveDevice('');  Optional: auto-save if filepath set }
     end;
   end;
@@ -818,19 +820,19 @@ var
 
 begin
   DeviceTreeView.Items.Clear;
-  if FDeviceManager.CurrentDevice <> nil then
+  if FDeviceManager.DeviceInfo <> nil then
   begin
-    FDeviceNode := DeviceTreeView.Items.Add(nil, FDeviceManager.CurrentDevice.Name);
+    FDeviceNode := DeviceTreeView.Items.Add(nil, FDeviceManager.DeviceInfo.Name);
     FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
     FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
-    FDeviceNode.Data := FDeviceManager.CurrentDevice;
+    FDeviceNode.Data := FDeviceManager.DeviceInfo;
 
     { Add metadata subnodes for device }
-    AddMetadataNodes(FDeviceNode, FDeviceManager.CurrentDevice.CreatedAt, FDeviceManager.CurrentDevice.ModifiedAt);
+    AddMetadataNodes(FDeviceNode, FDeviceManager.DeviceInfo.CreatedAt, FDeviceManager.DeviceInfo.ModifiedAt);
     for I := 0 to FDeviceManager.GetTaskCount-1 do
     begin
         NewTaskNode := AddNode(FDeviceNode, FDeviceManager.GetTask(I).TaskType,
-                                             FDeviceManager.GetTask(I).FDisplayName);
+                                             FDeviceManager.GetTask(I).DisplayName);
         NewTaskNode.Data := FDeviceManager.GetTask(I);
 
         { Add metadata subnodes for each task }

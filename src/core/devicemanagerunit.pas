@@ -5,9 +5,11 @@ interface
 
 uses
   Classes, SysUtils, Contnrs, DateUtils, AnnealTypes, System.Rtti,
-  System.JSON,
-  Neon.Core.Types,
-  Neon.Core.Persistence.JSON,
+  System.JSON,System.TypInfo,
+  Neon.Core.Types,Neon.Core.Persistence,
+  Neon.Core.Persistence.JSON,Neon.Core.Persistence.JSON.Schema,
+  Neon.Core.Attributes,        // needs Data.DB
+  Neon.Core.Serializers.Nullables,
   System.Generics.Collections;
 
 type
@@ -36,7 +38,7 @@ type
   public
     constructor Create(const AName: string);
     property Name: string read FName write FName;
-    property CreatedAt: TDateTime read FCreatedAt;
+    property CreatedAt: TDateTime read FCreatedAt write FCreatedAt;
     property ModifiedAt: TDateTime read FModifiedAt write FModifiedAt;
   end;
 
@@ -46,12 +48,12 @@ type
   THardwareTask = class
   private
     FName: string;
+    FDisplayName: string;
     FTaskType: TNodeType;
     FCreatedAt: TDateTime;
     FExecutedAt: TDateTime;
     FIsRunning: Boolean;
   public
-    FDisplayName: string;
     constructor Create(const AName: string; ATaskType: TNodeType);
     procedure SetResult(const AResult: THardwareResult); virtual; abstract;
     function GetJunctionListing : TJunctionListing; virtual; abstract;
@@ -59,10 +61,11 @@ type
                 AJunctionIndex: Integer); virtual; abstract;
     {procedure SetConfig(const AResult: THardwareResult); virtual; abstract;}
     property Name: string read FName write FName;
-    property TaskType: TNodeType read FTaskType;
-    property CreatedAt: TDateTime read FCreatedAt;
+    property TaskType: TNodeType read FTaskType write FTaskType;
+    property CreatedAt: TDateTime read FCreatedAt write FCreatedAt;
     property ExecutedAt: TDateTime read FExecutedAt write FExecutedAt;
     property IsRunning: Boolean read FIsRunning write FIsRunning;
+    property DisplayName: string read FDisplayName write FDisplayName;
 
   end;
 
@@ -116,25 +119,27 @@ type
   TDeviceManager = class
   private
     FDeviceInfo: TDeviceInfo;
-    FTasks: TObjectList;
+    FTasks: TObjectList<THardwareTask>;
     FIsOperationRunning: Boolean;
   public
     constructor Create;
     destructor Destroy; override;
-    
+
     procedure CreateNewDevice(const AName: string);
     procedure LoadDevice(const AFilePath: string);
     procedure SaveDevice(const AFilePath: string);
-    
+
     procedure AddTask(Task: THardwareTask;const AName: string; ATaskType: TNodeType);
     procedure RemoveTask(ATaskIndex: Integer);
     function GetTaskCount: Integer;
     function GetTask(AIndex: Integer): THardwareTask;
 
     procedure SetOperationRunning(ARunning: Boolean);
-    
-    property CurrentDevice: TDeviceInfo read FDeviceInfo;
-    property IsOperationRunning: Boolean read FIsOperationRunning;
+
+    property DeviceInfo: TDeviceInfo read FDeviceInfo write FDeviceInfo;
+
+    property IsOperationRunning: Boolean read FIsOperationRunning write FIsOperationRunning;
+    property Tasks:  TObjectList<THardwareTask> read FTasks write FTasks;
   end;
 {
 var
@@ -241,11 +246,13 @@ end;
 procedure TAnnealTask.SetResult(const AResult: THardwareResult);
 begin
   Result := AResult.AnnealResult;
+  FExecutedAt := now;
 end;
 
 procedure TProbeTask.SetResult(const AResult: THardwareResult);
 begin
   Result := AResult.ProbingResult;
+  FExecutedAt := now;
 end;
 
 procedure TBatchAnnealTask.SetResult(const AResult: THardwareResult);
@@ -254,6 +261,7 @@ begin
   begin
     setlength(FData,Length(FData)+1);
     FData[High(FData)]:=AResult.AnnealedJunctionResult;
+    FExecutedAt := now;
   end;
 end;
 
@@ -263,6 +271,7 @@ begin
   begin
     setlength(FData,Length(FData)+1);
     FData[High(FData)]:=AResult.ProbedJunctionResult;
+    FExecutedAt := now;
   end;
 end;
 
@@ -331,28 +340,37 @@ end;
 
 function TAnnealTask.GetJunctionListing : TJunctionListing;
 begin
+
+    if FExecutedAt<>0 then
+    begin
      SetLength(Result,1);
      Result[High(Result)].Name := 'Junction';
      Result[High(Result)].Index := 1;
      Result[High(Result)].NodeType := TNodeType.ntAnneal;
+    end else
+      SetLength(Result,0);
 
 end;
 
 function TProbeTask.GetJunctionListing : TJunctionListing;
 begin
+ if FExecutedAt<>0 then
+    begin
      SetLength(Result,1);
      Result[High(Result)].Name := 'Junction';
      Result[High(Result)].Index := 1;
      Result[High(Result)].NodeType := TNodeType.ntProbe;
-
+   end else
+      SetLength(Result,0);
 end;
 
 function TBatchAnnealTask.GetJunctionListing : TJunctionListing;
 var I:Integer;
 begin
-   for I := 0 to Length(Self.Result)-1 do
+  SetLength(Result,Length(Self.Result));
+   for I := 0 to High(Self.Result) do
    begin
-     SetLength(Result,I+1);
+
      Result[High(Result)].Name := Self.Result[I].Coord.Subsite;
      Result[High(Result)].Index := I;
      Result[High(Result)].NodeType := TNodeType.ntAnnealedJunction;
@@ -364,9 +382,9 @@ end;
 function TBatchProbeTask.GetJunctionListing : TJunctionListing;
 var I:Integer;
 begin
-   for I := 0 to Length(Self.Result)-1 do
+  SetLength(Result,Length(Self.Result));
+   for I := 0 to High(Self.Result) do
    begin
-     SetLength(Result,I+1);
      Result[High(Result)].Name := Self.Result[I].Coord.Subsite;
      Result[High(Result)].Index := I;
      Result[High(Result)].NodeType := TNodeType.ntProbedJunction;
@@ -382,7 +400,7 @@ constructor TDeviceManager.Create;
 begin
   inherited Create;
   FDeviceInfo := nil;
-  FTasks := TObjectList.Create(True);
+  FTasks := TObjectList<THardwareTask>.Create(True);
   FIsOperationRunning := False;
 end;
 
@@ -407,7 +425,23 @@ procedure TDeviceManager.LoadDevice(const AFilePath: string);
 var
   JsonText: string;
   StringList: TStringList;
+  TempDevice: TDeviceManager;
+  Config: INeonConfiguration;
+  z: integer;
+  LJSON: TJSONObject;
+  LTasksJSON: TJSONArray;
+  LTaskJSON: TJSONValue;
+  LTaskTypeJSON: TJSONValue;
+  LTaskType: TNodeType;
+  LTask: THardwareTask;
+
 begin
+  Config := TNeonConfiguration.Default
+    .SetMembers([TNeonMembers.Properties])
+    .SetVisibility([TMemberVisibility.mvPrivate])
+    .SetIgnoreMembers(['Tasks']);
+  TempDevice := TDeviceManager.Create();
+  Tasks := TObjectList<THardwareTask>.Create(True);
   try
     if not FileExists(AFilePath) then
     begin
@@ -421,7 +455,70 @@ begin
     finally
       StringList.Free;
     end;
+    z := GetEnumValue(TypeInfo(TNodeType), 'ntAnneal');
+    TempDevice.CreateNewDevice('placeholdere');
+    TNeon.JSONToObject(TempDevice,JsonText,Config);
+
     TNeon.JSONToObject(Self,JsonText);
+
+        // Deserialize the non-polymorphic properties.
+        // Exclude Tasks from this pass, or deserialize them separately.
+        // See the note below about Neon member configuration.
+        LJSON := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
+        LTasksJSON := LJSON.GetValue<TJSONArray>('Tasks');
+        if LTasksJSON = nil then
+          Exit;
+
+        FTasks.Clear;
+
+        for LTaskJSON in LTasksJSON do
+        begin
+          if not (LTaskJSON is TJSONObject) then
+            Continue;
+
+          LTaskTypeJSON := TJSONObject(LTaskJSON).GetValue('TaskType');
+          if LTaskTypeJSON = nil then
+            raise Exception.Create('TaskType is missing');
+
+          LTaskType := TNodeType(GetEnumValue(
+            TypeInfo(TNodeType), LTaskTypeJSON.Value));
+
+          case LTaskType of
+                 TNodeType.ntAnneal:
+                    begin
+                      //LTask := TAnnealTask.Create('',LTaskType)
+                      LTask := TNeon.JSONToObject<TAnnealTask>(LTaskJSON);
+                    end;
+                   TNodeType.ntBatchAnneal:
+                    begin
+                      //LTask := TBatchAnnealTask.Create('',LTaskType)
+                      LTask := TNeon.JSONToObject<TBatchAnnealTask>(LTaskJSON);
+                    end;
+                    TNodeType.ntProbe:
+                    begin
+                      //LTask := TProbeTask.Create('',LTaskType)
+                      LTask := TNeon.JSONToObject<TProbeTask>(LTaskJSON);
+                    end;
+                    TNodeType.ntBatchProbe:
+                    begin
+                      //LTask := TBatchProbeTask.Create('',LTaskType)
+                      LTask := TNeon.JSONToObject<TBatchProbeTask>(LTaskJSON);
+                    end
+          else
+            raise Exception.CreateFmt(
+              'Unsupported task type: %s',
+              [LTaskTypeJSON.Value]);
+      end;
+        try
+          //TNeon.JSONToObject(LTask, LTaskJSON.Value);
+          FTasks.Add(LTask);
+        except
+          LTask.Free;
+        raise;
+      end;
+    end;
+
+
   except
     on E: Exception do
     begin
@@ -434,7 +531,12 @@ procedure TDeviceManager.SaveDevice(const AFilePath: string);
 var
   DeviceJSON: TJSONValue;
   StringList: TStringList;
+  Config: INeonConfiguration;
+
 begin
+  Config := TNeonConfiguration.Default
+    .SetMembers([TNeonMembers.Properties])
+    .SetVisibility([TMemberVisibility.mvPrivate]);
   try
     if not Assigned(FDeviceInfo) then
     begin
