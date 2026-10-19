@@ -26,9 +26,10 @@ procedure TaskFinished(
 
 procedure Error(
   const Msg: string);
+
+
+function ShouldAbort: Boolean;
 end;
-
-
 implementation
 
 end.

@@ -34,12 +34,12 @@ begin
   ExStyle := GetWindowLongPtr(Handle, GWL_EXSTYLE);
 
   // Check specifically for the WS_EX_TOPMOST flag
-  IsTopMost := (ExStyle and WS_EX_TOPMOST) <> 0;
+ { IsTopMost := (ExStyle and WS_EX_TOPMOST) <> 0;
 
   if IsTopMost then
     ShowMessage('Debug: WS_EX_TOPMOST is active! Hex: ' + IntToHex(ExStyle, 8))
   else
-    ShowMessage('Debug: WS_EX_TOPMOST is NOT active. Hex: ' + IntToHex(ExStyle, 8));
+    ShowMessage('Debug: WS_EX_TOPMOST is NOT active. Hex: ' + IntToHex(ExStyle, 8)); }
 end;
 
 end.

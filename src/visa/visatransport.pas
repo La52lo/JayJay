@@ -29,7 +29,7 @@
 interface
 
 uses
-  SysUtils;
+   Winapi.Windows, System.SysUtils;
 
 { ------------------------------------------------------------------ }
 { VISA type aliases                                                    }
@@ -38,7 +38,7 @@ type
   ViStatus   = LongInt;
   ViSession  = LongWord;
   ViUInt32   = LongWord;
-  ViBoolean  = Word;        { VI_TRUE=1, VI_FALSE=0 }
+  ViBoolean  = UInt16;        { VI_TRUE=1, VI_FALSE=0 }
   ViPSession = ^ViSession;
   ViPUInt32  = ^ViUInt32;
 
@@ -63,35 +63,42 @@ const
 { NI-VISA DLL imports                                                  }
 { ------------------------------------------------------------------ }
 {$IF Defined(MSWINDOWS)}
-const VISALIB = 'visa32.dll';
-{$ELSE}
-const VISALIB = 'libvisa.so';
+ const VISALIB = 'visa32.dll';
 {$ENDIF}
 
 function viOpenDefaultRM(out sesn: ViSession): ViStatus;
-  cdecl; external VISALIB name 'viOpenDefaultRM';
+  stdcall; external VISALIB name 'viOpenDefaultRM';
 
-function viOpen(sesn: ViSession; rsrcName: PChar; accessMode: ViUInt32;
+function viOpen(sesn: ViSession; rsrcName: PAnsiChar; accessMode: ViUInt32;
   openTimeout: ViUInt32; out vi: ViSession): ViStatus;
-  cdecl; external VISALIB name 'viOpen';
+  stdcall; external VISALIB name 'viOpen';
 
 function viClose(vi: ViSession): ViStatus;
-  cdecl; external VISALIB name 'viClose';
+  stdcall; external VISALIB name 'viClose';
 
 function viClear(vi: ViSession): ViStatus;
-  cdecl; external VISALIB name 'viClear';
+  stdcall; external VISALIB name 'viClear';
 
-function viWrite(vi: ViSession; buf: PChar; count: ViUInt32;
+{ Changed 'buf' to Pointer to safely handle both text strings and binary byte arrays }
+function viWrite(vi: ViSession; buf: Pointer; count: ViUInt32;
   out retCount: ViUInt32): ViStatus;
-  cdecl; external VISALIB name 'viWrite';
+  stdcall; external VISALIB name 'viWrite';
 
-function viRead(vi: ViSession; buf: PChar; count: ViUInt32;
+function viRead(vi: ViSession; buf: Pointer; count: ViUInt32;
   out retCount: ViUInt32): ViStatus;
-  cdecl; external VISALIB name 'viRead';
+  stdcall; external VISALIB name 'viRead';
 
 function viSetAttribute(vi: ViSession; attrName: ViUInt32;
   attrValue: ViUInt32): ViStatus;
-  cdecl; external VISALIB name 'viSetAttribute';
+  stdcall; external VISALIB name 'viSetAttribute';
+
+function viGetAttribute(vi: ViSession; attrName: ViUInt32;
+  out attrValue): ViStatus;
+  stdcall; external VISALIB name 'viGetAttribute';
+
+function viStatusDesc(vi: ViSession; status: ViStatus;
+  desc: PAnsiChar): ViStatus;
+  stdcall; external VISALIB name 'viStatusDesc';
 
 { ------------------------------------------------------------------ }
 { High-level transport object                                          }
@@ -130,16 +137,55 @@ implementation
 
 { ------------------------------------------------------------------ }
 
-procedure TVisaTransport.CheckStatus(status: ViStatus; const context: string);
+{procedure TVisaTransport.CheckStatus(status: ViStatus; const context: string);
 begin
   if status < VI_SUCCESS then
+
     raise EVISAError.CreateFmt(
       'VISA error 0x%.8X in %s  (resource: %s)',
       [LongWord(status), context, FAddr]);
+end;}
+
+procedure TVisaTransport.CheckStatus(status: ViStatus; const context: string);
+var
+  { Expand to 1024 bytes to completely eliminate any driver stack overflow risks }
+  ErrorBuffer: AnsiString;
+  ErrorMsg: string;
+  LookupSession: ViSession;
+begin
+  if status < VI_SUCCESS then
+  begin
+    { Safely clear the expanded buffer space }
+    SetLength(ErrorBuffer, 1023);
+    FillChar(ErrorBuffer[1], 1023, ' ');
+    if FInstr <> VI_NULL then
+      LookupSession := FInstr
+    else
+      LookupSession := FRM;
+
+    { Call viStatusDesc with the safe, padded stack buffer pointer }
+    if LookupSession <> VI_NULL then
+      if (viStatusDesc(LookupSession, status, PAnsiChar(ErrorBuffer)) = VI_SUCCESS) then
+        begin
+          { Safe parsing to string up to the null-terminator boundary }
+          SetString(ErrorMsg, PAnsiChar(ErrorBuffer), StrLen(PAnsiChar(ErrorBuffer)));
+        end
+        else
+          ErrorMsg := 'Unknown or unmapped VISA error code.';
+
+    ErrorMsg := TrimRight(ErrorMsg);
+
+    { Now that the stack frames are perfectly preserved, this will fire cleanly }
+    raise EVISAError.CreateFmt(
+      'VISA Error [0x%.8X] in %s: %s (Resource: %s)',
+      [LongWord(status), context, ErrorMsg, FAddr]
+    );
+  end;
 end;
 
-constructor TVisaTransport.Create(const resourceAddress: string;
-  timeoutMs: LongWord);
+
+
+constructor TVisaTransport.Create(const resourceAddress: string; timeoutMs: LongWord);
 var
   st : ViStatus;
 begin
@@ -148,39 +194,42 @@ begin
   FRM     := VI_NULL;
   FInstr  := VI_NULL;
 
-  { Open the default resource manager }
-  st := viOpenDefaultRM(FRM);
-  CheckStatus(st, 'viOpenDefaultRM');
+  try
+    { Open the default resource manager }
+    st := viOpenDefaultRM(FRM);
+    CheckStatus(st, 'viOpenDefaultRM');
 
-  { Open the instrument session }
-  st := viOpen(FRM, PChar(resourceAddress), VI_NO_LOCK, 0, FInstr);
-  CheckStatus(st, 'viOpen("' + resourceAddress + '")');
+    { Open the instrument session }
+    st := viOpen(FRM, PAnsiChar(AnsiString(resourceAddress)), VI_NO_LOCK, 0, FInstr);
 
-  { --- Replicate QCoDeS VisaInstrument.__init__ setup ------------- }
+    CheckStatus(st, 'viOpen("' + resourceAddress + '")');
 
-  { 1. I/O timeout }
-  st := viSetAttribute(FInstr, VI_ATTR_TMO_VALUE, timeoutMs);
-  CheckStatus(st, 'viSetAttribute(VI_ATTR_TMO_VALUE)');
+    { --- Replicate QCoDeS VisaInstrument.__init__ setup ------------- }
 
-  { 2. Termination character = LF (#10), matching QCoDeS '\n' default }
+    { 1. I/O timeout }
+    OutputDebugString('AFTER CheckStatus - Code continued sequentially!');
+    st := viSetAttribute(FInstr, VI_ATTR_TMO_VALUE, timeoutMs);
+    CheckStatus(st, 'viSetAttribute(VI_ATTR_TMO_VALUE)');
 
+    { 2. Termination character = LF (#10) }
+    st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR, 10);
+    CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR)');
 
-  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR,10 ); {Ord(#10)}
-  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR)');
+    st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, VI_TRUE);
+    CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
 
-  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, VI_TRUE);
-  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
+    { 3. Device clear }
+    st := viClear(FInstr);
+    CheckStatus(st, 'viClear');
 
-  { 3. Assert EOI on last write byte (standard GPIB practice)
-  st := viSetAttribute(FInstr, VI_ATTR_SEND_END_EN, VI_TRUE);
-  CheckStatus(st, 'viSetAttribute(VI_ATTR_SEND_END_EN)');   }
-
-  { 4. Device clear – QCoDeS VisaInstrument does this by default
-       (device_clear=True). Flushes any stale data from a previous
-       session.                                                       }
-  st := viClear(FInstr);
-  CheckStatus(st, 'viClear');
+  except
+    { If anything failed above, clean up what we managed to open, then re-raise }
+    if FInstr <> VI_NULL then viClose(FInstr);
+    if FRM    <> VI_NULL then viClose(FRM);
+    raise; // Re-raises the exact EVISAError exception back up to the caller
+  end;
 end;
+
 
 destructor TVisaTransport.Destroy;
 begin
@@ -201,10 +250,10 @@ procedure TVisaTransport.Write(const cmd: string);
 var
   st       : ViStatus;
   retCount : ViUInt32;
-  buf      : string;
+  buf      : AnsiString;
 begin
-  buf := cmd;   { append LF terminator }
-  st  := viWrite(FInstr, PChar(buf), Length(buf), retCount);
+  buf := AnsiString(cmd + #10);   { append LF terminator }
+  st  := viWrite(FInstr, PAnsiChar(buf), Length(buf), retCount);
   CheckStatus(st, 'viWrite("' + cmd + '")');
 end;
 
@@ -214,13 +263,20 @@ const
 var
   st       : ViStatus;
   retCount : ViUInt32;
-  buf      : array[0..BUFSIZE-1] of Char;
+  buf      : array[0..BUFSIZE-1] of AnsiChar; // Changed from Char to AnsiChar
 begin
   Write(cmd);
   FillChar(buf, SizeOf(buf), 0);
-  st := viRead(FInstr, @buf[0], BUFSIZE-1, retCount);
+
+  // This is now perfectly safe because 'Pointer' accepts any address pointer type (@)
+  st := viRead(FInstr, @buf[0], BUFSIZE - 1, retCount);
   CheckStatus(st, 'viRead (after "' + cmd + '")');
-  Result := Trim(string(buf));
+  if st >= 0 then
+  begin
+    // To convert this buffer safely into a normal Delphi string for a memo or label:
+     SetString(Result, PAnsiChar(@buf[0]), retCount);
+     Result := TrimRight(Result);
+  end;
 end;
 
 end.

@@ -152,7 +152,7 @@ end;
 procedure TB1500Controller.Connect;
 begin
   FB1500 := TB1500.Create(FAddress);   { driver constructor }
-  {FB1500.Open;}
+  {FB1500.Open; }
   FConnected := True;
   {WriteLn('Connected to B1500A at ' + FAddress);}
 end;
@@ -308,12 +308,13 @@ begin
   FSetupStatus[0].Address := FAnalyzerAddress;
   FSetupStatus[0].Skipped := False;
   try
-    FAnalyzer := TB1500Controller.Create(FAnalyzerAddress, FCompliance);;
+    FAnalyzer := TB1500Controller.Create(FAnalyzerAddress, FCompliance);
+    FAnalyzer.Connect;
     if FRunSelfCal then FAnalyzer.SelfCalibrate;
     FSetupStatus[0].OK      := True;
     FSetupStatus[0].Message := '';
   except
-    on E: SysUtils.Exception do
+    on E: Exception do
     begin
       FreeAndNil(FAnalyzer);
       FSetupStatus[0].OK      := False;
@@ -379,6 +380,7 @@ begin
       end;
     end;
   end;
+  FObserver.InitializeSetup(FSetupStatus);
 end;
 
 function TAnnealManager.IsDamaged(R, ThresholdOpen, ThresholdShort: Double): Boolean;
@@ -493,6 +495,8 @@ begin
   for Cycle := 0 to Aparams.Cycles - 1 do
   begin
     { Inner loop: NPulsePairs pairs per cycle }
+    if Fobserver.ShouldAbort then
+      Break;
     for Pair := 0 to AParams.PulsePairs - 1 do
     begin
       { Positive pulse }
@@ -605,6 +609,8 @@ begin
 
   for i := 0 to High(ASpecs) do
   begin
+    if Fobserver.ShouldAbort then
+      Break;
     Fobserver.Log(Format('--- [%d/%d] %s  coord=%s ---',
                    [i + 1, Length(ASpecs),
                     Coord.Subsite, Coord.ToString]));
@@ -663,6 +669,8 @@ begin
   try
     while not Coord.Break do
     begin
+      if Fobserver.ShouldAbort then
+      Break;
       Fobserver.Log(Format('  [%d] %s ... ',
                    [i + 1, Coord.ToString]));
 

@@ -12,6 +12,7 @@ type
     FCommandQueue:  TQueue<THardwareCommand>;
     FCommandLock: TCriticalSection;
     FCommandEvent: TEvent;
+    FAbortRequested: Integer;
 
     FAnnealManager: TAnnealManager;
 
@@ -23,6 +24,7 @@ type
   protected
     procedure Execute; override;
      { Override TComponent interface methods to disable reference counting }
+
     function QueryInterface(const IID: TGuid; out Obj): HResult; stdcall;
     function _AddRef: Integer; stdcall;
     function _Release: Integer; stdcall;
@@ -30,12 +32,15 @@ type
   public
     constructor Create(Observer: IMeasurementObserver);
     destructor Destroy; override;
-
+    procedure StopThread;
     procedure Initialize;
     procedure Anneal(const Parameters: TAnnealConfig);
     procedure Probe(const Parameters: TProbingParameters);
     procedure AnnealBatch(const Parameters: TAnnealConfigArray);
     procedure ProbeBatch(const Parameters: TProbingParameters);
+
+    procedure AbortOperation;
+    procedure ResetAbort;
 
     { IMeasurementObserver implementation }
 
@@ -57,6 +62,8 @@ type
 
     procedure Error(
       const Msg: string);
+
+    function ShouldAbort: Boolean;
   end;
 
 
@@ -65,12 +72,26 @@ implementation
 
 constructor THardwareThread.Create(Observer: IMeasurementObserver);
 begin
+  inherited Create(True);  // Create suspended
+  FreeOnTerminate := False;
   FObserver := Observer;
+  FCommandQueue:= TQueue<THardwareCommand>.Create;
+  FCommandLock := TCriticalSection.Create;
+  FCommandEvent := TEvent.Create(
+    nil,     // Default security attributes
+    False,   // Auto-reset event
+    False,   // Initially nonsignaled
+    ''       // Unnamed event
+  );
 end;
 
 destructor THardwareThread.Destroy;
 begin
    FreeAndNil(FAnnealManager);
+   FCommandLock.Free;
+   FCommandQueue.Free;
+   FCommandEvent.Free;
+   inherited Destroy;
 end;
 
 procedure THardwareThread.Execute;
@@ -117,8 +138,13 @@ begin
       end;
     end;
   finally
-    FAnnealManager.Free;
   end;
+end;
+
+procedure THardwareThread.StopThread;
+begin
+  Terminate;
+  FCommandEvent.SetEvent;
 end;
 
 function THardwareThread.GetNextCommand(
@@ -268,6 +294,16 @@ begin
     end);
 end;
 
+procedure THardwareThread.AbortOperation;
+begin
+  TInterlocked.Exchange(FAbortRequested, 1);
+end;
+
+procedure THardwareThread.ResetAbort;
+begin
+  TInterlocked.Exchange(FAbortRequested, 0);
+end;
+
 procedure THardwareThread.MeasurementPoint(
   Time: Double;
   Value: Double
@@ -313,6 +349,11 @@ begin
       if Assigned(FObserver) then
         FObserver.Error(Msg);
     end);
+end;
+
+function THardwareThread.ShouldAbort: Boolean;
+begin
+  Result := TInterlocked.CompareExchange(FAbortRequested, 0, 0) <> 0;
 end;
 end.
 

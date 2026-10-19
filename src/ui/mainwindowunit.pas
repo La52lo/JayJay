@@ -3,14 +3,15 @@ unit MainWindowUnit;
 interface
 
 uses
-  Classes, SysUtils, Vcl.Forms, Controls, Graphics, Dialogs, Menus, ComCtrls,
+  Classes, SysUtils, Vcl.Forms,StrUtils, Controls, Graphics, Dialogs, Menus, ComCtrls,
   ExtCtrls ,Contnrs, Winapi.Windows, ProbeConfig, DeviceDialogUnit,
   TaskSelectDialogUnit, AnnealConfig, ResultViewer,logview, threadinghelper,
   MeasurementObserver,AnnealManager,AnnealTypes,nodejunctionmapper,
   System.ImageList, Vcl.ImgList, Vcl.ToolWin, Mitov.VCLTypes,
   VCL.LPControl, SLControlCollection, LPControlDrawLayers, SLBasicDataDisplay,
   SLDataDisplay, SLDataChart, SLScope, System.Types,System.Generics.Collections,
-  DeviceManagerUnit, Chart4D.Types,Chart4D.Style,Chart4D.VCL, Chart4D.Series;
+  DeviceManagerUnit, Chart4D.Types,Chart4D.Style,Chart4D.VCL, Chart4D.Series,
+  Vcl.VirtualImageList, Vcl.BaseImageCollection, Vcl.ImageCollection;
 
 type
 
@@ -42,6 +43,9 @@ type
     TreeNodeIcons: TImageList;
     LogButton: TToolButton;
     ToolButton1: TToolButton;
+    AbortButton: TToolButton;
+    ImageCollection1: TImageCollection;
+    VirtualImageList1: TVirtualImageList;
 
     procedure AnnealMenuItemClick(Sender: TObject);
     procedure ConnectButtonClick(Sender: TObject);
@@ -69,6 +73,7 @@ type
       var AllowEdit: Boolean);
     procedure DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
       var S: string);
+    procedure AbortButtonClick(Sender: TObject);
   private
     FDeviceNode: TTreeNode;
     FSetupStatus: TSetupStatus;
@@ -83,7 +88,6 @@ type
     function AddNode(AParent: TTreeNode; const ANodeType: TNodeType;
                      const AText: string): TTreeNode;
     procedure OnThreadTerminate(Sender: TObject);
-    procedure UpdateEquipmentStatus;
     procedure PopulateDeviceInfo;
     procedure CreateDefaultDevice;
     procedure DispatchTask(TaskPointer:Pointer);
@@ -116,8 +120,10 @@ type
 
     procedure Error(
       const Msg: string);
-  end;
 
+
+   function ShouldAbort: Boolean;
+  end;
   TNodeTypeDefinition = record
     NodeType: TNodeType;
     ImageIndex: Integer;
@@ -180,7 +186,7 @@ begin
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
-  Chart.Plot.Title := 'Junction Data';
+  Chart.Plot.Title := 'Live Data';
   Chart.Plot.Subtitle := 'From Parameter Analyzer';
   //Chart.Plot.Source := 'Source: World Bank';
   Chart.Plot.Categories := ['1', '2'];
@@ -204,6 +210,9 @@ end;
 
 procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
 begin
+
+   FCurrentThread.ResetAbort;
+
    case (THardwareTask(TaskPointer)).TaskType of
        TNodeType.ntProbe:
          begin
@@ -267,6 +276,11 @@ begin
   ModifiedNode := DeviceTreeView.Items.AddChild(ANode, 'Modified: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', AModifiedAt));
   ModifiedNode.ImageIndex := 5; { Gray info icon }
   ModifiedNode.SelectedIndex := ModifiedNode.ImageIndex;
+end;
+
+procedure TMainWindowForm.AbortButtonClick(Sender: TObject);
+begin
+FCurrentThread.AbortOperation;
 end;
 
 function TMainWindowForm.AddJunctionNode(ANode: TTreeNode;
@@ -595,7 +609,8 @@ begin
     FCurrentThread := THardwareThread.Create(Self);
 
   try
-    FCurrentThread.Start;
+    if not FCurrentThread.Started then
+     FCurrentThread.Start;
     FCurrentThread.Initialize
 
   except
@@ -604,13 +619,6 @@ begin
   end;
 end;
 
-procedure TMainWindowForm.UpdateEquipmentStatus;
-begin
-  if length(FSetupStatus) = 3  then
-      EquipmentStatusBar.Panels[1].Text := 'Equipment: Connected'
-  else EquipmentStatusBar.Panels[1].Text := 'Initializing';
-  EquipmentStatusBar.Repaint;
-end;
 
 procedure TMainWindowForm.DeviceTreeViewDeletion(Sender: TObject; Node: TTreeNode);
 begin
@@ -625,14 +633,14 @@ procedure TMainWindowForm.FormDestroy(Sender: TObject);
 begin
   if Assigned(FCurrentThread) then
   begin
-    FCurrentThread.Terminate;
+    FCurrentThread.StopThread;
     FCurrentThread.WaitFor;
     FCurrentThread.Free;
-    FJunctionNodeList.Free;
-    FDeviceManager.Free;
+
 
   end;
-
+  FJunctionNodeList.Free;
+  FDeviceManager.Free;
 end;
 
 procedure TMainWindowForm.FileMenuItemClick(Sender: TObject);
@@ -677,7 +685,7 @@ begin
       LedX + LedRadius, LedY + LedRadius);
     AEquipmentStatusBar.Canvas.Brush.Style := bsClear;
     AEquipmentStatusBar.Canvas.Font.Color := clWindowText;
-    StatusText := Instrument.Label_;
+    StatusText := Instrument.Label_ +' '+ IfThen(Instrument.OK, 'OK', 'NG');
     TextX := LedX + LedRadius + 8;
     TextY := Rect.Top + ((Rect.Bottom - Rect.Top -
       AEquipmentStatusBar.Canvas.TextHeight(StatusText)) div 2);
@@ -869,14 +877,13 @@ end;
 procedure TMainWindowForm.InitializeSetup(
   Status: TSetupStatus);
 begin
-    if length(Status) = 3 then
-     begin
-      ShowMessage('Connected to all instruments.');
-    end
-    else
-      ShowMessage('Failed to connect to one or more instruments.');
     FSetupStatus := Status;
-    UpdateEquipmentStatus;
+    if FSetupStatus[0].OK and FSetupStatus[1].OK then
+      if FSetupStatus[2].OK  then
+        RunBatchButton.Enabled:=True
+      else
+        RunSingleButton.Enabled:=True;
+    EquipmentStatusBar.Repaint;
 end;
 
 procedure TMainWindowForm.MeasurementPoint(
@@ -901,6 +908,11 @@ end;
 procedure TMainWindowForm.TaskStarted();
  begin
     Chart.Plot.ClearSeries;
+ end;
+
+ function TMainWindowForm.ShouldAbort:Boolean;
+ begin
+
  end;
 
 procedure TMainWindowForm.TaskFinished(
