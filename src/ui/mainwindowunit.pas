@@ -76,7 +76,7 @@ type
     procedure AbortButtonClick(Sender: TObject);
   private
     FDeviceNode: TTreeNode;
-    FSetupStatus: TSetupStatus;
+    FSetupStatus: TSetupStatusManager;
     FCurrentThread: THardwareThread;
     FSelectedTaskNode: TTreeNode;
     FDeviceManager: TDeviceManager;
@@ -102,27 +102,15 @@ type
   public
     procedure RefreshTreeView;
     { :::::::::: Interface procedures :::::::::: }
-    procedure Log(
-      const Msg: string);
-
-    procedure InitializeSetup(
-      Status: TSetupStatus);
-
+    procedure Log(const Msg: string);
+    procedure InitializeSetup(Status: TSetupStatus);
     procedure MeasurementPoint(
       Time: Double;
       Value: Double);
-
-    procedure TaskStarted(
-);
-
-    procedure TaskFinished(
-      Result: THardwareResult);
-
-    procedure Error(
-      const Msg: string);
-
-
-   function ShouldAbort: Boolean;
+    procedure TaskStarted();
+    procedure TaskFinished(Result: THardwareResult);
+    procedure Error(const Msg: string);
+    function ShouldAbort: Boolean;
   end;
   TNodeTypeDefinition = record
     NodeType: TNodeType;
@@ -173,12 +161,12 @@ begin
   FSelectedTaskNode := nil;
   FOperationManager.IsTaskRunning:=False;
   {FNodeToJunctionMap:= TTreeArrayMapper.Create; }
-  
+
   { Enable inline editing }
   DeviceTreeView.ReadOnly := False;
   DeviceTreeView.OnEditing := DeviceTreeViewEditing;
   DeviceTreeView.OnEdited := DeviceTreeViewEdited;
-  
+
   Chart := TChart4D.Create(Self);
   Chart.Parent := Self;
   Chart.Align := alClient;
@@ -195,9 +183,9 @@ begin
 
 
   { Create default device }
-  FSetupStatus[0].Label_ := 'Analyzer';
-  FSetupStatus[1].Label_ := 'Prober';
-  FSetupStatus[2].Label_ := 'Heater';
+  FSetupStatus.SetupStatus[itAnalyzer].Label_ := 'Device';
+  FSetupStatus.SetupStatus[itHeater].Label_ := 'Device';
+  FSetupStatus.SetupStatus[itProber].Label_ := 'Device';
   FDeviceManager := TDeviceManager.Create;
   CreateDefaultDevice;
 end;
@@ -259,7 +247,7 @@ end;
 function TMainWindowForm.IsMetadataNode(ANode: TTreeNode): Boolean;
 begin
   Result := (ANode <> nil) and (ANode.Parent <> nil) and
-    ((ANode.Text = 'Created') or (ANode.Text = 'Modified') or 
+    ((ANode.Text = 'Created') or (ANode.Text = 'Modified') or
      (ANode.Text = 'Config') or (ANode.Text = 'Result'));
 end;
 
@@ -333,21 +321,8 @@ begin
     ShowMessage('Cannot create device while operation is running.');
     Exit;
   end;
-
-  if DeviceDialog.ShowDeviceDialog(DeviceName) then
-  begin
-    DeviceTreeView.Items.Clear;
-    FDeviceManager.CreateNewDevice(DeviceName);
-    FDeviceNode := DeviceTreeView.Items.Add(nil, DeviceName);
-    FDeviceNode.ImageIndex := GetImageIndexForNodeType(ntDevice);
-    FDeviceNode.SelectedIndex := FDeviceNode.ImageIndex;
-    FDeviceNode.Data := FDeviceManager.DeviceInfo;
-
-    { Add metadata subnodes }
-    AddMetadataNodes(FDeviceNode, FDeviceManager.DeviceInfo.CreatedAt, FDeviceManager.DeviceInfo.ModifiedAt);
-    FDeviceNode.Expanded := True;
-    PopulateDeviceInfo;
-  end;
+    CreateDefaultDevice;
+    RefreshTreeView;
 end;
 
 function TMainWindowForm.QueryInterface(const IID: TGuid; out Obj): HResult;
@@ -607,11 +582,13 @@ procedure TMainWindowForm.ConnectButtonClick(Sender: TObject);
 begin
   if not Assigned(FCurrentThread) then
     FCurrentThread := THardwareThread.Create(Self);
+    FCurrentThread.OnTerminate := Self.OnThreadTerminate;
 
   try
     if not FCurrentThread.Started then
      FCurrentThread.Start;
-    FCurrentThread.Initialize
+     FCurrentThread.Initialize;
+     ConnectButton.Enabled := False;
 
   except
     on E: Exception do
@@ -675,7 +652,7 @@ begin
   LedY := Rect.Top + ((Rect.Bottom - Rect.Top) div 2);
   AEquipmentStatusBar.Canvas.Pen.Color := clGray;
 
-  for Instrument in FSetupStatus do
+  for Instrument in FSetupStatus.SetupStatus do
 
   begin
     if Instrument.OK then
@@ -737,24 +714,40 @@ begin
   if (DeviceTreeView.Selected <> nil) and (DeviceTreeView.Selected.Data <> nil) then
   begin
     Node := DeviceTreeView.Selected;
-    if  Node.Level = 0 then
+    RunSingleButton.Enabled := False;
+    RunBatchButton.Enabled := False;
+    if  Node.Level = 1 then
       begin
-        RunSingleButton.Visible := False;
-        RunBatchButton.Visible := False;
-        exit;
+      HardwareTask :=  THardwareTask(Node.Data);
+      if (HardwareTask.TaskType = TNodeType.ntAnneal) and
+        FSetupStatus.SingleAnnealAllowed then
+        begin
+         RunSingleButton.Enabled := true;
+         RunBatchButton.Enabled := False;
+         exit;
+        end;
+      if (HardwareTask.TaskType = TNodeType.ntProbe) and
+        FSetupStatus.SingleProbeAllowed then
+        begin
+         RunSingleButton.Enabled := true;
+         RunBatchButton.Enabled := False;
+         exit;
+        end;
+      if (HardwareTask.TaskType = TNodeType.ntBatchProbe) and
+        FSetupStatus.BatchProbeAllowed then
+        begin
+         RunSingleButton.Enabled := False;
+         RunBatchButton.Enabled := True;
+         exit;
+        end;
+      if (HardwareTask.TaskType = TNodeType.ntBatchAnneal) and
+        FSetupStatus.BatchAnnealAllowed then
+        begin
+         RunSingleButton.Enabled := False;
+         RunBatchButton.Enabled := True;
+         exit;
+        end;
       end;
-    HardwareTask :=  THardwareTask(Node.Data);
-
-
-    if (HardwareTask.TaskType = TNodeType.ntAnneal) or (HardwareTask.TaskType = TNodeType.ntProbe) then
-    begin
-      RunSingleButton.Visible := True;
-      RunBatchButton.Visible := False;
-    end else
-    begin
-      RunSingleButton.Visible := False;
-      RunBatchButton.Visible := True;
-    end;
   end;
 end;
 
@@ -849,19 +842,26 @@ begin
 end;
 
 procedure TMainWindowForm.OnThreadTerminate(Sender: TObject);
+var
+CrashedThread:  THardwareThread;
 begin
- { if FCurrentThread <> nil then
-  begin
-    if FCurrentThread.ThreadError <> '' then
-      ShowMessage('Operation failed: ' + FCurrentThread.ThreadError)
-    else
-      ShowMessage('Operation completed successfully.');
-
-    DeviceManager.SetOperationRunning(False);
-    FCurrentThread.Free;
+  CrashedThread := THardwareThread(Sender);
+  try
+    // Check if the thread crashed
+    if Assigned(FCurrentThread.FatalException) then
+    begin
+      // This executes safely in the UI thread
+      if FCurrentThread.FatalException is Exception then
+        ShowMessage('Thread crashed: ' + Exception(FCurrentThread.FatalException).Message);
+    end;
+  finally
+    // 4. CRITICAL CLEANUP: Clear our pointer and free the memory object!
+    // Since we are inside the thread's own final event notification,
+    // we use DisposeOf / Free on a local scoped variable.
     FCurrentThread := nil;
-    UpdateEquipmentStatus;
-  end;}
+    CrashedThread.Free;
+    ConnectButton.Enabled := True;
+  end;
 end;
 
 procedure TMainWindowForm.Log(const Msg: string);
@@ -877,12 +877,8 @@ end;
 procedure TMainWindowForm.InitializeSetup(
   Status: TSetupStatus);
 begin
-    FSetupStatus := Status;
-    if FSetupStatus[0].OK and FSetupStatus[1].OK then
-      if FSetupStatus[2].OK  then
-        RunBatchButton.Enabled:=True
-      else
-        RunSingleButton.Enabled:=True;
+    FSetupStatus.SetupStatus := Status;
+    ConnectButton.Enabled := True;
     EquipmentStatusBar.Repaint;
 end;
 

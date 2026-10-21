@@ -153,6 +153,7 @@ procedure TB1500Controller.Connect;
 begin
   FB1500 := TB1500.Create(FAddress);   { driver constructor }
   {FB1500.Open; }
+
   FConnected := True;
   {WriteLn('Connected to B1500A at ' + FAddress);}
 end;
@@ -304,78 +305,78 @@ var
 begin
   Result := True;
   { --- B1500A Analyzer --- }
-  FSetupStatus[0].Label_  := 'B1500A';
-  FSetupStatus[0].Address := FAnalyzerAddress;
-  FSetupStatus[0].Skipped := False;
+  FSetupStatus[itAnalyzer].Label_  := 'B1500A';
+  FSetupStatus[itAnalyzer].Address := FAnalyzerAddress;
+  FSetupStatus[itAnalyzer].Skipped := False;
   try
     FAnalyzer := TB1500Controller.Create(FAnalyzerAddress, FCompliance);
     FAnalyzer.Connect;
-    if FRunSelfCal then FAnalyzer.SelfCalibrate;
-    FSetupStatus[0].OK      := True;
-    FSetupStatus[0].Message := '';
+    //if FRunSelfCal then FAnalyzer.SelfCalibrate;
+    FSetupStatus[itAnalyzer].OK      := True;
+    FSetupStatus[itAnalyzer].Message := '';
   except
     on E: Exception do
     begin
       FreeAndNil(FAnalyzer);
-      FSetupStatus[0].OK      := False;
-      FSetupStatus[0].Message := E.Message;
+      FSetupStatus[itAnalyzer].OK      := False;
+      FSetupStatus[itAnalyzer].Message := E.Message;
       Result := False;
     end;
   end;
 
   { --- Heating Stage --- }
-  FSetupStatus[1].Label_  := 'Heater';
-  FSetupStatus[1].Address := FHeaterAddress;
+  FSetupStatus[itHeater].Label_  := 'Heater';
+  FSetupStatus[itHeater].Address := FHeaterAddress;
   if FHeaterAddress = '' then
   begin
-    FSetupStatus[1].Skipped := True;
-    FSetupStatus[1].OK      := True;
-    FSetupStatus[1].Message := 'not configured';
+    FSetupStatus[itHeater].Skipped := True;
+    FSetupStatus[itHeater].OK      := True;
+    FSetupStatus[itHeater].Message := 'not configured';
   end
   else
   begin
-    FSetupStatus[1].Skipped := False;
+    FSetupStatus[itHeater].Skipped := False;
     try
       FHeater := THeatingStage.Create(FHeaterAddress);
       FHeater.Connect;
       Temp := FHeater.GetTemperature;
-      FSetupStatus[1].OK      := True;
-      FSetupStatus[1].Message := Format('T: %.1f C', [Temp]);
+      FSetupStatus[itHeater].OK      := True;
+      FSetupStatus[itHeater].Message := Format('T: %.1f C', [Temp]);
     except
       on E: SysUtils.Exception do
       begin
         FreeAndNil(FHeater);
-        FSetupStatus[1].OK      := False;
-        FSetupStatus[1].Message := E.Message;
+        FSetupStatus[itHeater].OK      := False;
+        FSetupStatus[itHeater].Message := E.Message;
         Result := False;
       end;
     end;
   end;
 
   { --- Prober --- }
-  FSetupStatus[2].Label_  := 'Prober';
-  FSetupStatus[2].Folder := FProberExeDir;
-  FSetupStatus[2].Address := FProberAddress;
+  FSetupStatus[itProber].Label_  := 'Prober';
+  FSetupStatus[itProber].Folder := FProberExeDir;
+  FSetupStatus[itProber].Address := FProberAddress;
   if FProberExeDir = '' then
   begin
-    FSetupStatus[2].Skipped := True;
-    FSetupStatus[2].OK      := True;
-    FSetupStatus[2].Message := 'not configured';
+    FSetupStatus[itProber].Skipped := True;
+    FSetupStatus[itProber].OK      := True;
+    FSetupStatus[itProber].Message := 'not configured';
   end
   else
   begin
-    FSetupStatus[2].Skipped := False;
+    FSetupStatus[itProber].Skipped := False;
     try
-      FProber := TProberController.Create(FProberExeDir);
+      FProber := TProberController.Create(FProberExeDir,FProberAddress);
       FProber.Connect;
-      FSetupStatus[2].OK      := True;
-      FSetupStatus[2].Message := 'executables found';
+      FSetupStatus[itProber].OK      := True;
+      FSetupStatus[itProber].Message := 'executables found';
     except
       on E: SysUtils.Exception do
       begin
         FreeAndNil(FProber);
-        FSetupStatus[2].OK      := False;
-        FSetupStatus[2].Message := E.Message;
+        FSetupStatus[itProber].OK      := False;
+        FSetupStatus[itProber].Message := E.Message;
         Result := False;
       end;
     end;

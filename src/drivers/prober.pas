@@ -28,7 +28,7 @@ type
     class function StringAfterLast(const S, Marker: string): string; static;
 
   public
-    constructor Create(const AExeDir: string);
+    constructor Create(const AExeDir: string;AAddress:string);
 
     procedure CheckProberExecutables;
     procedure Connect;
@@ -57,11 +57,12 @@ end;
 // Constructor
 // ---------------------------------------------------------------------------
 
-constructor TProberController.Create(const AExeDir: string);
+constructor TProberController.Create(const AExeDir: string;AAddress:string);
 begin
   inherited Create;
 
   FExeDir := AExeDir;
+  FAddress := AAddress;
   FLastStdOut := '';
 
   CheckProberExecutables;

@@ -124,10 +124,12 @@ end;
 procedure TB1511B.EnableOutputs;
 var
   mb : TMessageBuilder;
+  nr : TChannelNr;
 begin
+  nr := FChannel;
   mb := TMessageBuilder.Create;
   try
-    SendCmd(mb.CN(FChannel).Message);
+    SendCmd(mb.CN(nr).Message);
     FEnabled := True;
   finally
     mb.Free;

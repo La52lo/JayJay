@@ -28,6 +28,7 @@ object MainWindowForm: TMainWindowForm
     TabOrder = 1
     Transparent = True
     OnClick = TaskToolBarClick
+    ExplicitWidth = 925
     object ConnectButton: TToolButton
       Left = 0
       Top = 0

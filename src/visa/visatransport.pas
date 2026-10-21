@@ -252,7 +252,7 @@ var
   retCount : ViUInt32;
   buf      : AnsiString;
 begin
-  buf := AnsiString(cmd + #10);   { append LF terminator }
+  buf := AnsiString(cmd + #13#10);   { append LF terminator }
   st  := viWrite(FInstr, PAnsiChar(buf), Length(buf), retCount);
   CheckStatus(st, 'viWrite("' + cmd + '")');
 end;
@@ -263,18 +263,25 @@ const
 var
   st       : ViStatus;
   retCount : ViUInt32;
-  buf      : array[0..BUFSIZE-1] of AnsiChar; // Changed from Char to AnsiChar
+  ReadBuffer : AnsiString; // Changed from Char to AnsiChar
 begin
   Write(cmd);
-  FillChar(buf, SizeOf(buf), 0);
+  SetLength(ReadBuffer, BUFSIZE);
+  FillChar(PAnsiChar(ReadBuffer)^, BUFSIZE, 0);
+  retCount:=0;
+  //FillChar(buf, SizeOf(buf), 0);
 
   // This is now perfectly safe because 'Pointer' accepts any address pointer type (@)
-  st := viRead(FInstr, @buf[0], BUFSIZE - 1, retCount);
+  st := viRead(FInstr,PAnsiChar(ReadBuffer), BUFSIZE, retCount);
+  {OutputDebugString(PChar(Format(
+  'viRead: status=$%.8x, retCount=%d',
+  [Cardinal(st), retCount]
+    )));}
   CheckStatus(st, 'viRead (after "' + cmd + '")');
   if st >= 0 then
   begin
     // To convert this buffer safely into a normal Delphi string for a memo or label:
-     SetString(Result, PAnsiChar(@buf[0]), retCount);
+     SetString(Result, PAnsiChar(ReadBuffer), retCount);
      Result := TrimRight(Result);
   end;
 end;

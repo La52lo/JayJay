@@ -113,8 +113,7 @@ begin
 
   { Set ASCII data format: FMT 1,0 (with header, measurement data only) }
   {Write('FMT 1,0');}
-
-  {******FindModules;  }
+  FindModules;
 end;
 
 destructor TB1500.Destroy;
@@ -235,7 +234,7 @@ begin
   { Raise timeout temporarily so the blocking *CAL? does not time out }
   FTransport.SetTimeout(CAL_TIMEOUT_MS);
   try
-    resp := Trim(RawAsk('*IDN?'));
+    resp := Trim(RawAsk('*CAL?'));
   finally
     FTransport.SetTimeout(DEFAULT_TIMEOUT_MS);
   end;

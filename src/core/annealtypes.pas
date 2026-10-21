@@ -15,7 +15,17 @@ type
     Message  : string;
   end;
 
-  TSetupStatus = Array[0..2] of TInstrumentStatus;
+  TInstrumentType = (itAnalyzer, itProber, itHeater);
+  TSetupStatus = Array[TInstrumentType] of TInstrumentStatus;
+
+  TSetupStatusManager = record
+    SetupStatus: TSetupStatus;
+    function SingleProbeAllowed:Boolean;
+    function BatchProbeAllowed:Boolean;
+    function SingleAnnealAllowed:Boolean;
+    function BatchAnnealAllowed:Boolean;
+  end;
+
 
   TAnnealConfig = record
     MeasureVoltage     : Double;
@@ -194,7 +204,27 @@ begin
 end;
  }
 
+function TSetupStatusManager.SingleProbeAllowed:Boolean;
+begin
+  Result := SetupStatus[itAnalyzer].OK ;
+end;
 
+function TSetupStatusManager.BatchProbeAllowed:Boolean;
+begin
+    Result := SetupStatus[itAnalyzer].OK  and  SetupStatus[itProber].OK;
+end;
+
+function TSetupStatusManager.SingleAnnealAllowed:Boolean;
+begin
+     Result := SetupStatus[itAnalyzer].OK  and  SetupStatus[itHeater].OK;
+end;
+
+function TSetupStatusManager.BatchAnnealAllowed:Boolean;
+begin
+     Result := SetupStatus[itAnalyzer].OK
+                and  SetupStatus[itProber].OK
+                and  SetupStatus[itHeater].OK;
+end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);
 var N: Integer;
