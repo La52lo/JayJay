@@ -589,7 +589,6 @@ begin
      FCurrentThread.Start;
      FCurrentThread.Initialize;
      ConnectButton.Enabled := False;
-
   except
     on E: Exception do
       ShowMessage('Connection error: ' + E.Message);

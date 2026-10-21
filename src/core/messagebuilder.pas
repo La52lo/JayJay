@@ -13,7 +13,7 @@
 
   Reference: Keysight B1500A Programming Guide, Chapter 4 (FLEX Commands)
 
-  Fixed vs original
+  Fixed vs ori ginal
   -----------------
   * Removed duplicate Append implementation (caused "duplicate identifier"
     compile error in FPC). The private method is now named AppendCmd to
