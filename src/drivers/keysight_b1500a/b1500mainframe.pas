@@ -89,7 +89,19 @@ type
 
     { Disable all channels (CL with no argument = all) }
     procedure DisableAllChannels;
+    procedure SetDataFormat(const AFormatStr: string = '1,0');
+    procedure SetMeasurementModeSpot(const AChannels: array of TChannelNr);
+    procedure SetMeasurementModeSpotIV(AChannel: TChannelNr; AMode: Integer);
+    procedure EnableChannels(const AChannels: array of TChannelNr);
+    procedure SetMeasurementConfig();
+    procedure SetIntegrationTimePLC(APLC: Double = 1.0;
+      AADCType: TADCType = adcHighResolution);
 
+        /// <summary>
+    /// Sends XE and returns the parsed FMT response tokens for all measured channels.
+    /// </summary>
+    function ExecuteSynchronousMeasurement: TFMTResponseArray;
+    function ExecuteMeasurementRaw: string;
     { SMU channels, populated by FindModules.
       Correspond to b1500.smu1 / b1500.smu2 in Python. }
     property SMU1 : TB1511B read FSMU1;
@@ -102,17 +114,19 @@ implementation
 { ------------------------------------------------------------------ }
 
 constructor TB1500.Create(const gpibAddress: string; timeoutMs: LongWord);
+var
+ mb: TMessageBuilder;
 begin
   inherited Create;
   FSMU1 := nil;
   FSMU2 := nil;
-
-  {WriteLn('Connecting to B1500A at ', gpibAddress, ' ...');}
   FTransport := TVisaTransport.Create(gpibAddress, timeoutMs);
-  {WriteLn('Connected.');}
-
-  { Set ASCII data format: FMT 1,0 (with header, measurement data only) }
-  {Write('FMT 1,0');}
+  mb := TMessageBuilder.Create;
+  try
+    Write(mb.Rst.Fmt().Message);
+  finally
+    mb.Free;
+  end;
   FindModules;
 end;
 
@@ -153,7 +167,7 @@ var
   code : string;
 begin
   { ERR? returns "+<code>,\"<message>\"" }
-  resp := Trim(RawAsk('ERR?'));
+  resp := Trim(RawAsk('ERRX?'));
 
   { No error is indicated by code 0 }
   if (Length(resp) >= 2) and (resp[1] = '+') then
@@ -200,8 +214,8 @@ begin
     begin
       Inc(count);
       case count of
-        1 : FSMU1 := TB1511B.Create(Write, Ask, slots[i].SlotNr);
-        2 : FSMU2 := TB1511B.Create(Write, Ask, slots[i].SlotNr);
+        1 : FSMU1 := TB1511B.Create(Write, Ask, TChannelNr(slots[i].SlotNr));
+        2 : FSMU2 := TB1511B.Create(Write, Ask, TChannelNr(slots[i].SlotNr));
       end;
     end;
   end;
@@ -212,15 +226,117 @@ begin
 
   { Build the log message without IfThen }
   smuMsg := Format('Found %d B1511B module(s). SMU1=ch%d',
-                   [count, FSMU1.Channel]);
+                   [count, Ord(FSMU1.Channel)]);
   if Assigned(FSMU2) then
-    smuMsg := smuMsg + Format(', SMU2=ch%d', [FSMU2.Channel]);
+    smuMsg := smuMsg + Format(', SMU2=ch%d', [Ord(FSMU2.Channel)]);
   {WriteLn(smuMsg);}
 end;
 function TB1500.GetConnected: Boolean;
 begin
   Result := (FTransport <> nil);
 end;
+{ ------------------------------------------------------------------ }
+{ Setting default measurement parameter                              }
+{ ------------------------------------------------------------------ }
+procedure TB1500.SetMeasurementConfig();
+var
+ mb: TMessageBuilder;
+begin
+ mb := TMessageBuilder.Create;
+  try
+    write(mb.MY_AIT(Channel_2)
+         .MY_AIT(Channel_1)
+         .MY_FL(Channel_2)
+         .MY_FL(Channel_1)
+         .MY_RI(Channel_2)
+         .MY_RI(Channel_1)
+         .Message);
+  finally
+    mb.Free;
+  end;
+
+
+end;
+
+
+{ ------------------------------------------------------------------ }
+{ Setting integration time                                                }
+{ ------------------------------------------------------------------ }
+ procedure TB1500.SetIntegrationTimePLC(APLC: Double = 1;
+                      AADCType: TADCType = adcHighResolution);
+ var
+  Cmd: String;
+ begin
+   Cmd := Format('AIT %d,2,%s',[Ord(AADCType),
+                  FloatToStr(APLC,TFormatSettings.Invariant)]);
+   Write(Cmd);
+ end;
+
+procedure TB1500.SetDataFormat(const AFormatStr: string);
+begin
+  Write('FMT ' + AFormatStr);
+end;
+
+procedure TB1500.SetMeasurementModeSpot(const AChannels: array of TChannelNr);
+var
+  mb: TMessageBuilder;
+begin
+  mb := TMessageBuilder.Create;
+  try
+    Write(mb.MM(1, AChannels).Message);
+  finally
+    mb.Free;
+  end;
+end;
+
+procedure TB1500.SetMeasurementModeSpotIV(AChannel: TChannelNr; AMode: Integer);
+var
+  mb: TMessageBuilder;
+begin
+  mb := TMessageBuilder.Create;
+  try
+    Write(mb.CMM(AChannel, AMode).Message);
+  finally
+    mb.Free;
+  end;
+end;
+
+procedure TB1500.EnableChannels(const AChannels: array of TChannelNr);
+var
+  I: Integer;
+  ChList: string;
+begin
+  ChList := '';
+  for I := Low(AChannels) to High(AChannels) do
+  begin
+    if I = Low(AChannels) then
+      ChList := IntToStr(Ord(AChannels[I]))
+    else
+      ChList := ChList + ',' + IntToStr(Ord(AChannels[I]));
+  end;
+  Write('CN ' + ChList);
+  FSMU1.IsEnabled:=True; FSMU2.IsEnabled:=True;
+
+end;
+
+function TB1500.ExecuteSynchronousMeasurement: TFMTResponseArray;
+var
+  raw: string;
+begin
+  raw := Ask('XE');
+  Result := ParseFMTResponse(raw);
+end;
+
+
+
+function TB1500.ExecuteMeasurementRaw: string;
+begin
+  SetMeasurementModeSpot([FSMU1.Channel, FSMU2.Channel]);
+  Result := Ask('XE');
+end;
+
+
+
 { ------------------------------------------------------------------ }
 { Self-calibration                                                     }
 { ------------------------------------------------------------------ }

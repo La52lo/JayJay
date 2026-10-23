@@ -123,7 +123,6 @@
         <DCCReference Include="src\core\messagebuilder.pas"/>
         <DCCReference Include="src\visa\visatransport.pas"/>
         <DCCReference Include="src\ui\devicedialogunit.pas"/>
-        <DCCReference Include="src\ui\resultviewer.pas"/>
         <DCCReference Include="src\ui\probeconfig.pas">
             <Form>ProbeConfigForm</Form>
         </DCCReference>
@@ -138,6 +137,10 @@
             <Form>LogViewForm</Form>
         </DCCReference>
         <DCCReference Include="src\core\nodejunctionmapper.pas"/>
+        <DCCReference Include="src\ui\resultviewer.pas">
+            <Form>ResultViewerForm</Form>
+            <FormType>dfm</FormType>
+        </DCCReference>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

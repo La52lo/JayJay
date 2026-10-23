@@ -177,9 +177,9 @@ begin
   Chart.Plot.Title := 'Live Data';
   Chart.Plot.Subtitle := 'From Parameter Analyzer';
   //Chart.Plot.Source := 'Source: World Bank';
-  Chart.Plot.Categories := ['1', '2'];
-  Chart.Plot.AddSeries('2020', [0,100]);
-  {Chart.Plot.AddLineSeries();}
+  //Chart.Plot.Categories := ['1', '2'];
+  //Chart.Plot.AddSeries('2020', [0,100]);
+  Chart.Plot.AddLineSeries('series',[1,2],[70,90]);
 
 
   { Create default device }
@@ -871,6 +871,7 @@ end;
 procedure TMainWindowForm.LogButtonClick(Sender: TObject);
 begin
 LogViewForm.Show;
+
 end;
 
 procedure TMainWindowForm.InitializeSetup(
@@ -889,6 +890,11 @@ var
   TempArray  : TArray<Double>;
   XTempArray  : TArray<Double>;
 begin
+SetLength(TempArray,0);
+SetLength(XTempArray,0);
+ if Chart.Plot.Series.IsEmpty then
+   Chart.Plot.AddLineSeries('Resistance',XTempArray,TempArray);
+
  TempArray := Chart.Plot.Series[0].Values;
  XTempArray := Chart.Plot.Series[0].XValues;
  C := Length(TempArray);
@@ -897,7 +903,8 @@ begin
  TempArray[High(TempArray)] := Value;
  XTempArray[High(XTempArray)] := Time;
  Chart.Plot.ClearSeries;
- Chart.Plot.AddSeries('Resistance',TempArray);
+ //Chart.Plot.AddSeries('Resistance',TempArray);
+ Chart.Plot.AddLineSeries('Resistance',XTempArray,TempArray);
 end;
 
 procedure TMainWindowForm.TaskStarted();

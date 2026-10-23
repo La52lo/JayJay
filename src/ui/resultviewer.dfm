@@ -10,6 +10,7 @@ object ResultViewerForm: TResultViewerForm
   Font.Height = -12
   Font.Name = 'Segoe UI'
   Font.Style = []
+  OnCreate = FormCreate
   TextHeight = 15
   object InfoPanel: TPanel
     Left = 0
@@ -18,7 +19,5 @@ object ResultViewerForm: TResultViewerForm
     Height = 50
     Align = alBottom
     TabOrder = 0
-    ExplicitTop = 533
-    ExplicitWidth = 894
   end
 end

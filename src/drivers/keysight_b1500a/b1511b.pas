@@ -34,6 +34,15 @@ type
   TWriteProc = procedure(const cmd: string) of object;
   TAskFunc   = function (const cmd: string): string of object;
 
+  /// <summary>
+  /// Measurement readings extracted for an SMU from a spot acquisition.
+  /// </summary>
+  TSMUSpotReading = record
+    Voltage : Double;
+    Current : Double;
+    Status  : TMeasurementStatusEnum;
+  end;
+
   TB1511B = class
   private
     FWriteProc  : TWriteProc;
@@ -76,12 +85,18 @@ type
     { current() - GET - TI command }
     function  GetCurrent: Double;
 
+    /// <summary>
+    /// Triggers synchronous execution (XE) and returns the spot measurement value.
+    /// </summary>
+    function MeasureSpot: Double;
+
     { v_measure_range_config / i_measure_range_config }
     procedure VMeasRangeConfig(vrange: TVMeasRange);
     procedure IMeasRangeConfig(irange: TIMeasRange);
+    function ExtractReading(const ARawResponse: string): TSMUSpotReading;
 
     property Channel   : TChannelNr read FChannel;
-    property IsEnabled : Boolean    read FEnabled;
+    property IsEnabled : Boolean    read FEnabled write FEnabled;
   end;
 
 implementation
@@ -155,6 +170,8 @@ begin
   FCompliance := compliance;
 end;
 
+
+
 procedure TB1511B.SetVoltage(v: Double);
 var
   mb : TMessageBuilder;
@@ -204,6 +221,26 @@ begin
   Result := ParseSpotMeasurement(raw);
 end;
 
+function TB1511B.MeasureSpot: Double;
+var
+  mb  : TMessageBuilder;
+  raw : string;
+begin
+  if not FEnabled then
+    EnableOutputs;
+
+  mb := TMessageBuilder.Create;
+  try
+    // Trigger measurement using XE
+    raw := QueryInstr(mb.XE.Message);
+  finally
+    mb.Free;
+  end;
+
+  Result := ParseSpotMeasurement(raw);
+end;
+
+
 procedure TB1511B.VMeasRangeConfig(vrange: TVMeasRange);
 begin
   FVMeasRange := vrange;
@@ -212,6 +249,31 @@ end;
 procedure TB1511B.IMeasRangeConfig(irange: TIMeasRange);
 begin
   FIMeasRange := irange;
+end;
+
+function TB1511B.ExtractReading(const ARawResponse: string): TSMUSpotReading;
+var
+  Tokens: TFMTResponseArray;
+  Token: TFMTResponse;
+begin
+  Result.Voltage := 0.0;
+  Result.Current := 0.0;
+  Result.Status  := msNormal;
+
+  // Parse raw comma-separated string into module tokens
+  Tokens := ParseFMTResponse(ARawResponse);
+
+  for Token in Tokens do
+  begin
+    if Token.Channel = FChannel then
+    begin
+      Result.Status := Token.Status;
+      if Token.DataType = dtVoltage then
+        Result.Voltage := Token.Value
+      else if Token.DataType = dtCurrent then
+        Result.Current := Token.Value;
+    end;
+  end;
 end;
 
 end.

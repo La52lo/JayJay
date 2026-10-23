@@ -18,13 +18,13 @@ uses
   messagebuilder in 'src\core\messagebuilder.pas',
   visatransport in 'src\visa\visatransport.pas',
   devicedialogunit in 'src\ui\devicedialogunit.pas',
-  resultviewer in 'src\ui\resultviewer.pas',
   probeconfig in 'src\ui\probeconfig.pas' {ProbeConfigForm},
   annealconfig in 'src\ui\annealconfig.pas' {AnnealConfigForm},
   devicemanagerunit in 'src\core\devicemanagerunit.pas',
   taskselectdialogunit in 'src\ui\taskselectdialogunit.pas' {TaskSelectDialog},
   logview in 'src\ui\logview.pas' {LogViewForm},
-  nodejunctionmapper in 'src\core\nodejunctionmapper.pas';
+  nodejunctionmapper in 'src\core\nodejunctionmapper.pas',
+  resultviewer in 'src\ui\resultviewer.pas' {ResultViewerForm};
 
 {$R *.res}
 
@@ -38,6 +38,7 @@ begin
   Application.CreateForm(TProbeConfigForm, ProbeConfigForm);
   Application.CreateForm(TLogViewForm, LogViewForm);
   Application.CreateForm(TTaskSelectDialog, TaskSelectDialog);
+  Application.CreateForm(TResultViewerForm, ResultViewerForm);
   Application.Run;
 end.
 

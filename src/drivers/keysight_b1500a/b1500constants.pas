@@ -19,7 +19,10 @@ type
   { Channel numbers (slot * 10 + channel-within-slot)                  }
   { For B1511B in slot 1 → channel 1; slot 2 → channel 2; etc.        }
   { ------------------------------------------------------------------ }
-  TChannelNr = 1..10;
+  TChannelNr = (
+   channel_1 = 1,
+   channel_2 = 2
+  );
 
   { ------------------------------------------------------------------ }
   { Voltage output range  (DV command, irange/vrange parameter)         }
@@ -27,14 +30,10 @@ type
   { ------------------------------------------------------------------ }
   TVOutputRange = (
     vorAuto        = 0,    { auto ranging }
-    vorFix2mV      = 11,   {  2 mV range  (B1511B only) }
-    vorFix20mV     = 12,   { 20 mV range  }
-    vorFix200mV    = 13,   { 200 mV range }
-    vorFix2V       = 14,   {   2 V range  }
-    vorFix20V      = 15,   {  20 V range  }
-    vorFix40V      = 16,   {  40 V range  }
-    vorFix100V     = 17,   { 100 V range  }
-    vorFix200V     = 18    { 200 V range  }
+    vorFix200mV    = 2,   {  200 mV range  (B1511B only) }
+    vorFix500mV    = 5,   { 500 mV range  }
+    vorFix2V       = 11,   {   2 V range  }
+    vorFix5V       = 50   {  5 V range  }
   );
 
   { ------------------------------------------------------------------ }
@@ -42,14 +41,9 @@ type
   { ------------------------------------------------------------------ }
   TVMeasRange = (
     vmrAuto        = 0,
-    vmrFix2mV      = 11,
-    vmrFix20mV     = 12,
-    vmrFix200mV    = 13,
-    vmrFix2V       = 14,
-    vmrFix20V      = 15,
-    vmrFix40V      = 16,
-    vmrFix100V     = 17,
-    vmrFix200V     = 18
+    vmrFix200mV    = 2,
+    vmrFix2V       = 11,
+    vmrFix20V      = 12
   );
 
   { ------------------------------------------------------------------ }
@@ -69,16 +63,15 @@ type
   { ------------------------------------------------------------------ }
   TIMeasRange = (
     imrAuto   =  0,
-    imr1nA    =  8,
-    imr10nA   =  9,
-    imr100nA  = 10,
-    imr1uA    = 11,
-    imr10uA   = 12,
-    imr100uA  = 13,
-    imr1mA    = 14,
-    imr10mA   = 15,
-    imr100mA  = 16,
-    imr1A     = 17
+    imr1nA    = 11,
+    imr10nA   = 12,
+    imr100nA  = 13,
+    imr1uA    = 14,
+    imr10uA   = 15,
+    imr100uA  = 16,
+    imr1mA    = 17,
+    imr10mA   = 18,
+    imr100mA  = 19
   );
 
   { ------------------------------------------------------------------ }
@@ -111,7 +104,26 @@ type
     msSelfCalFailed   ,   { 'X',7 – self-cal in progress }
     msInvalid
   );
+  { ------------------------------------------------------------------ }
+  { Setting integration time (Valid until *RST or change selection via AAD }
+  { ------------------------------------------------------------------ }
+  TADCType = (
+    adcHighSpeed = 1,
+    adcHighResolution =2
+  );
 
+  TAITMode = (
+   adcAuto   = 0,
+   adcManual = 1,
+   adcPLC    = 2
+  );
+
+
+
+    TFilterActive = (
+    filterON = 1,
+    filterOFF = 2
+  );
 
 
 const
@@ -125,6 +137,12 @@ const
   { Known B1511B model string as returned by UNT? }
   MODEL_B1511B = 'B1511B';
   MODEL_B1511A = 'B1511A';
+
+  RANGE_LIMIT_1mA = -17;
+  RANGE_LIMIT_10mA = -18;
+  AUTORANGE_MODE_UP = 1;
+  AUTORANGE_THRESHOLD_50_PERCENT =  50;
+
 
 implementation
 
