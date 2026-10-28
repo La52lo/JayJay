@@ -96,7 +96,8 @@ type
     procedure SetMeasurementConfig();
     procedure SetIntegrationTimePLC(APLC: Double = 1.0;
       AADCType: TADCType = adcHighResolution);
-
+    procedure AllChannelSaveAndZero;
+    procedure AllChannelRestore;
         /// <summary>
     /// Sends XE and returns the parsed FMT response tokens for all measured channels.
     /// </summary>
@@ -124,6 +125,9 @@ begin
   mb := TMessageBuilder.Create;
   try
     Write(mb.Rst.Fmt().Message);
+    EnableChannels([Channel_1,Channel_2]);
+    SetMeasurementConfig;
+    AllChannelSaveAndZero;
   finally
     mb.Free;
   end;
@@ -244,12 +248,20 @@ var
 begin
  mb := TMessageBuilder.Create;
   try
-    write(mb.MY_AIT(Channel_2)
+
+    Sleep(30);
+    write(mb
+         .MY_AAD(Channel_1)
+         .MY_AIT(Channel_2)
          .MY_AIT(Channel_1)
          .MY_FL(Channel_2)
          .MY_FL(Channel_1)
          .MY_RI(Channel_2)
          .MY_RI(Channel_1)
+         .CMM(Channel_1,1)
+         .CMM(Channel_2,2)
+         .DV(Channel_2,TVOutputRange.vorAuto,0.0,0.1)
+         .MM(1,[Channel_1,Channel_2])
          .Message);
   finally
     mb.Free;
@@ -331,7 +343,7 @@ end;
 
 function TB1500.ExecuteMeasurementRaw: string;
 begin
-  SetMeasurementModeSpot([FSMU1.Channel, FSMU2.Channel]);
+  //SetMeasurementModeSpot([FSMU1.Channel, FSMU2.Channel]);
   Result := Ask('XE');
 end;
 
@@ -368,6 +380,34 @@ procedure TB1500.DisableAllChannels;
 begin
   { CL with no argument disables all channels simultaneously }
   RawWrite('CL');
+  if Assigned(FSMU1) then
+     FSMU1.IsEnabled:=False;
+  if Assigned(FSMU2) then
+     FSMU2.IsEnabled:=False;
+end;
+
+procedure TB1500.AllChannelSaveAndZero;
+var
+  mb: TMessageBuilder;
+begin
+  mb := TMessageBuilder.Create;
+  try
+    Write(mb.DZ.Message);
+  finally
+    mb.Free;
+  end;
+end;
+
+procedure TB1500.AllChannelRestore;
+var
+  mb: TMessageBuilder;
+begin
+  mb := TMessageBuilder.Create;
+  try
+    Write(mb.RZ.Message);
+  finally
+    mb.Free;
+  end;
 end;
 
 end.

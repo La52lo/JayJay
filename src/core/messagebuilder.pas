@@ -124,6 +124,9 @@ type
     function MY_RI(AChannel: TChannelNr) : TMessageBuilder;
     function MY_RM(AChannel: TChannelNr) : TMessageBuilder;
     function MY_FL(AChannel: TChannelNr) : TMessageBuilder;
+    function MY_AAD(AChannel: TChannelNr) : TMessageBuilder;
+    function DZ : TMessageBuilder;
+    function RZ : TMessageBuilder;
 
 
   end;
@@ -322,9 +325,15 @@ begin
   Result := Self;
 end;
 
+function TMessageBuilder.MY_AAD(AChannel: TChannelNr) : TMessageBuilder;
+begin
+  AppendCmd(SysUtils.Format('AAD %d,1', [Ord(AChannel)]));
+  Result := Self;
+end;
+
 function TMessageBuilder.MY_RI(AChannel: TChannelNr) : TMessageBuilder;
 begin
-  AppendCmd(SysUtils.Format('RI %d,%d',[Ord(AChannel),RANGE_LIMIT_10mA]));
+  AppendCmd(SysUtils.Format('RI %d,%d',[Ord(AChannel),RANGE_LIMIT_100uA]));
   Result := Self;
 end;
 
@@ -338,6 +347,18 @@ end;
 function TMessageBuilder.MY_FL(AChannel: TChannelNr) : TMessageBuilder;
 begin
  AppendCmd(SysUtils.Format('FL %d,%d',[Ord(TFilterActive.filterON),Ord(AChannel)]));
+  Result := Self;
+end;
+
+function TMessageBuilder.DZ : TMessageBuilder;
+begin
+ AppendCmd('DZ');
+  Result := Self;
+end;
+
+function TMessageBuilder.RZ : TMessageBuilder;
+begin
+ AppendCmd('RZ');
   Result := Self;
 end;
 

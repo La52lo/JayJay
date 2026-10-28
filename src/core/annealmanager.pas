@@ -66,7 +66,7 @@ type
     function SweepVoltageMeasureResistance(
       const AVoltages: TArray<Double>;
       ACompliance: Double = 0.05;
-      ASettleTimeSec: Double = 0.02
+      ASettleTimeSec: Double = 0.05 //sec
     ): TArray<Double>;
 
     property Address    : string  read FAddress;
@@ -108,6 +108,8 @@ type
     function Initialize : Boolean;
 
     procedure AnnealPulse(VPulse, AT: Double);
+    procedure AnnealPairs(AVPulseHigh,AVPulseLow, AT: Double;APairs:Integer;
+          ASMU:TB1511B;Var Res : TAnnealResult);
     function AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;
     function AnnealBatch(const ASpecs : TAnnealConfigArray) : TAnnealResultArray;
     function ProbeSingle(AParams: TProbingParameters): TProbingResult;
@@ -170,8 +172,8 @@ begin
     // 1. Configure mainframe timing & mode
 
   FB1500.SetDataFormat('1,0');
-  FB1500.SetIntegrationTimePLC(10, adcHighResolution);
-  FB1500.SetIntegrationTimePLC(10, adcHighSpeed);
+  //FB1500.SetIntegrationTimePLC(10, adcHighResolution);
+  //FB1500.SetIntegrationTimePLC(10, adcHighSpeed);
 
 
   FConnected := True;
@@ -296,7 +298,7 @@ function TB1500Controller.SweepVoltageMeasureResistance(
   ASettleTimeSec: Double
 ): TArray<Double>;
 var
-  Smu1, Smu2: TB1511B;
+  SMU1, SMU2: TB1511B;
   I: Integer;
   RawResp: string;
   Reading1, Reading2: TSMUSpotReading;
@@ -307,14 +309,9 @@ begin
   if Length(AVoltages) = 0 then
     Exit;
 
-  Smu1 := GetSMU(1);
-  Smu2 := GetSMU(2);
+  SMU1 := GetSMU(1);
+  SMU2 := GetSMU(2);
   SettleMs := Round(ASettleTimeSec * 1000);
-  FB1500.SetMeasurementConfig;
-  // 3. Enable channels and tie SMU2 low side to 0 V
-  SMU2.SourceConfig(TVOutputRange.vorAuto, FCompliance);
-  SMU2.SetVoltage(0.0);
-  FB1500.EnableChannels([Smu1.Channel, Smu2.Channel]);
   try
     for I := Low(AVoltages) to High(AVoltages) do
     begin
@@ -322,9 +319,10 @@ begin
 
       if SettleMs > 0 then
         Sleep(SettleMs);
-
+      
       // Trigger simultaneous acquisition across SMU1 & SMU2
       RawResp := FB1500.ExecuteMeasurementRaw;
+      //Reading1:=FB1500.ExecuteSynchronousMeasurement
 
       // Extracted cleanly by each SMU instance without B1500Module types:
       //Reading1 := Smu1.ExtractReading(RawResp);
@@ -333,13 +331,14 @@ begin
 
       // Calculate junction resistance: R = |(V_smu1 - V_smu2) / I_smu1|
       if Abs(Reading1.Current) > 1e-14 then
-        Result[I] := Abs((AVoltages[I] - Reading2.Voltage) / Reading1.Current)
+        //Result[I] := Abs((AVoltages[I] - Reading2.Voltage) / Reading1.Current)
+        Result[I] := Abs((AVoltages[I]) / Reading1.Current)
       else
         Result[I] := 1e12; // Open circuit fallback
       FObserver.MeasurementPoint(AVoltages[I], Result[I]);
     end;
   finally
-    FB1500.DisableAllChannels;
+
   end;
 end;
 
@@ -481,9 +480,13 @@ begin
   end
   else
     Voltages := TArray<Double>(AParams.VoltageList);
-
-  Result.Readings := TDoubleArray(FAnalyzer.SweepVoltageMeasureResistance(Voltages));
-  FAnalyzer.DisableOutputs;
+  FAnalyzer.FB1500.AllChannelRestore;
+  try
+   Result.Readings := TDoubleArray(FAnalyzer.SweepVoltageMeasureResistance(Voltages));
+  finally
+   //FAnalyzer.DisableOutputs;
+   FAnalyzer.FB1500.AllChannelSaveAndZero
+  end;
   Result.MeanResistance := MeanDoubleArray(Result.Readings);
   Result.StdResistance  := StdDoubleArray(Result.Readings);
   FObserver.Log(Format('Resistance: %.1f +/- %.1f Ohm',
@@ -513,7 +516,30 @@ begin
   Smu1.SetVoltage(0.0);
 end;
 
+procedure TAnnealManager.AnnealPairs(
+              AVPulseHigh,AVPulseLow, AT: Double;
+              APairs                    :Integer;
+              ASMU                      :TB1511B;
+              Var Res               : TAnnealResult);
+var
+  i: integer;
+  TStart: Double;
+begin
+  // Only pulse SMU1; SMU2 is already held at 0 V
+  for I := 1 to APairs do
+    begin
+      TStart := NowSeconds;
+      ASMU.SetVoltage(AVPulseHigh);
+      SleepSeconds(AT);
+      Res.AppendPulseDuration(NowSeconds - TStart);
+      TStart := NowSeconds;
+      ASMU.SetVoltage(AVPulseLow);
+      SleepSeconds(AT);
+      Res.AppendPulseDuration(NowSeconds - TStart);
+    end;
 
+  ASMU.SetVoltage(0.0);
+end;
 
 
 
@@ -527,7 +553,7 @@ var
   Cycle, Pair       : Integer;
   TotalPairs        : Integer;
   Stop              : Boolean;
-  TStart            : Double;
+  //TStart            : Double;
   Smu1, Smu2        : TB1511B;
 begin
   Res.TargetResistance := AParams.TargetResistance;
@@ -539,16 +565,15 @@ begin
   ProbingParameters.MeasureTime    := 0.5;
 
   FObserver.TaskStarted();
-
+  try
   // 1. Pre-enable channels and configure static ground reference on SMU2
   Smu1 := FAnalyzer.GetSMU(1);
-  Smu2 := FAnalyzer.GetSMU(2);
-  FAnalyzer.EnableOutputs;
-  Smu2.SetVoltage(0.0);
-
+  FAnalyzer.FB1500.AllChannelRestore;
   // 2. Initial baseline resistance measurement
   CurrentTime := NowSeconds;
-  ProbingResult := ProbeResistance(ProbingParameters);
+  //ProbingResult := ProbeResistance(ProbingParameters);
+  ProbingResult.Readings := TDoubleArray(
+      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList)));
   CurrentR := ProbingResult.MeanResistance;
   Res.AddResistanceSample(CurrentTime, CurrentR);
   Res.AppendCycleStats(CurrentR, ProbingResult.StdResistance);
@@ -559,7 +584,7 @@ begin
   begin
     FObserver.Log(Format('Initial R (%.1f Ohm) already exceeds target (%.1f Ohm). Skipping anneal.',
       [Res.FinalResistance, AParams.TargetResistance]));
-    FAnalyzer.DisableOutputs;
+    FAnalyzer.FB1500.AllChannelSaveAndZero;
     Res.Finalise;
     Exit(Res);
   end;
@@ -571,50 +596,27 @@ begin
   begin
     if FObserver.ShouldAbort then
       Break;
-
-    for Pair := 0 to AParams.PulsePairs - 1 do
-    begin
-      // Positive pulse
-      try
-        TStart := NowSeconds;
-        AnnealPulse(AParams.PulsePositive, AParams.PulseLength);
-        Res.AppendPulseDuration(NowSeconds - TStart);
-      except
+    try
+    AnnealPairs(AParams.PulsePositive,AParams.PulseNegative,
+                AParams.PulseLength,AParams.PulsePairs,Smu1,Res);
+    except
         on E: Exception do
         begin
-          FObserver.Log(Format('Error on positive pulse (cycle %d, pair %d): %s. Stopping.',
-            [Cycle, Pair, E.Message]));
+          FObserver.Log(Format('Error on  cycle (cycle %d): %s. Stopping.',
+            [Cycle, E.Message]));
           FObserver.Error(E.Message);
           Stop := True;
           Break;
         end;
-      end;
-
-      // Negative pulse
-      try
-        TStart := NowSeconds;
-        AnnealPulse(AParams.PulseNegative, AParams.PulseLength);
-        Res.AppendPulseDuration(NowSeconds - TStart);
-      except
-        on E: Exception do
-        begin
-          FObserver.Log(Format('Error on negative pulse (cycle %d, pair %d): %s. Stopping.',
-            [Cycle, Pair, E.Message]));
-          FObserver.Error(E.Message);
-          Stop := True;
-          Break;
-        end;
-      end;
-
-      Inc(TotalPairs);
     end;
-
+    Inc(TotalPairs,AParams.PulsePairs);
     if Stop then
       Break;
 
     // Resistance measurement at the end of the cycle
     CurrentTime := NowSeconds;
-    ProbingResult := ProbeResistance(ProbingParameters);
+    ProbingResult.Readings := TDoubleArray(
+    FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList)));
     CurrentR := ProbingResult.MeanResistance;
 
     // Record correct per-cycle timestamp
@@ -638,13 +640,14 @@ begin
       Break;
     end;
   end;
-
+  finally
   Res.FinalCycleCount := Cycle;
   Res.FinalPairCount  := TotalPairs;
 
-  FAnalyzer.DisableOutputs;
+  FAnalyzer.FB1500.AllChannelSaveAndZero;
   Res.Finalise;
   Result := Res;
+  end;
 end;
 
 function TAnnealManager.AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;

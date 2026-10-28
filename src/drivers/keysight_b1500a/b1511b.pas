@@ -265,7 +265,7 @@ begin
 
   for Token in Tokens do
   begin
-    if Token.Channel = FChannel then
+    if Token.Channel = Ord(FChannel) then
     begin
       Result.Status := Token.Status;
       if Token.DataType = dtVoltage then

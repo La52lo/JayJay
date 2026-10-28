@@ -4,7 +4,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ValEdit, Vcl.Grids,
-  AnnealTypes, Vcl.ExtCtrls, Vcl.StdCtrls;
+  AnnealTypes, Vcl.ExtCtrls, Vcl.StdCtrls, System.Math;
 
 type
 
@@ -132,11 +132,14 @@ if not TryStrToFloat(Trim(ProbeConfigEditor.Values['Starting voltage [V]']),
     Exit;
   end;
 
-  SetLength(VoltageList,NumberOfSteps);
-  VoltageList[0]:= StartingVoltage;
-  for i := 1 to NumberOfSteps-1  do
+  SetLength(VoltageList,0);
+  for i := 0 to NumberOfSteps-1  do
   begin
-    VoltageList[i] :=  StartingVoltage + i*StepSize;
+    if not (IsZero(StartingVoltage + i*StepSize)) then
+    begin
+      Setlength(VoltageList,Length(VoltageList)+1);
+      VoltageList[High(VoltageList)] :=  StartingVoltage + i*StepSize;
+    end;
   end;
   AConfig.VoltageList := VoltageList;
   AConfig.MeasureTime := MeasureTime;
