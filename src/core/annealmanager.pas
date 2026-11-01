@@ -210,6 +210,7 @@ begin
   RequireConnection;
   FB1500.SMU1.EnableOutputs;
   FB1500.SMU2.EnableOutputs;
+  Sleep(50);
 end;
 
 procedure TB1500Controller.DisableOutputs;
@@ -317,9 +318,11 @@ begin
     begin
       Smu1.SetVoltage(AVoltages[I]);
 
-      if SettleMs > 0 then
+
+      if (I = Low(AVoltages)) and (High(AVoltages) <> 0)
+         then  Sleep(2000)  //let it sit before first measuremnt
+      else if SettleMs > 0 then
         Sleep(SettleMs);
-      
       // Trigger simultaneous acquisition across SMU1 & SMU2
       RawResp := FB1500.ExecuteMeasurementRaw;
       //Reading1:=FB1500.ExecuteSynchronousMeasurement
@@ -396,6 +399,7 @@ begin
       FSetupStatus[itAnalyzer].OK      := False;
       FSetupStatus[itAnalyzer].Message := E.Message;
       Result := False;
+      FObserver.Log(E.Message);
     end;
   end;
 
@@ -424,6 +428,7 @@ begin
         FSetupStatus[itHeater].OK      := False;
         FSetupStatus[itHeater].Message := E.Message;
         Result := False;
+        FObserver.Log(E.Message);
       end;
     end;
   end;
@@ -453,6 +458,7 @@ begin
         FSetupStatus[itProber].OK      := False;
         FSetupStatus[itProber].Message := E.Message;
         Result := False;
+        FObserver.Log(E.Message);
       end;
     end;
   end;
@@ -559,10 +565,10 @@ begin
   Res.TargetResistance := AParams.TargetResistance;
 
   // Setup probing parameters once
-  SetLength(ProbingParameters.VoltageList, 4);
-  ProbingParameters.VoltageList:= [-0.01,-0.005,0.005,0.1];
+  SetLength(ProbingParameters.VoltageList, 1);
+  ProbingParameters.VoltageList[0]:= AParams.MeasureVoltage;  //[-0.01,-0.005,0.005,0.1];
   ProbingParameters.InitialWait    := 0.5;
-  ProbingParameters.MeasureTime    := 0.5;
+  ProbingParameters.MeasureTime    := AParams.MeasureTime;            //0.5;
 
   FObserver.TaskStarted();
   try
@@ -573,7 +579,8 @@ begin
   CurrentTime := NowSeconds;
   //ProbingResult := ProbeResistance(ProbingParameters);
   ProbingResult.Readings := TDoubleArray(
-      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList)));
+      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList),0.05
+      ,ProbingParameters.MeasureTime));
   CurrentR := ProbingResult.MeanResistance;
   Res.AddResistanceSample(CurrentTime, CurrentR);
   Res.AppendCycleStats(CurrentR, ProbingResult.StdResistance);
@@ -616,7 +623,8 @@ begin
     // Resistance measurement at the end of the cycle
     CurrentTime := NowSeconds;
     ProbingResult.Readings := TDoubleArray(
-    FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList)));
+      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList),0.05
+      ,ProbingParameters.MeasureTime));
     CurrentR := ProbingResult.MeanResistance;
 
     // Record correct per-cycle timestamp
@@ -738,44 +746,46 @@ begin
   SetLength(Result, 0);
   i:=0;
   FObserver.TaskStarted();
+  try
   Coord := FProber.Start;
   Fobserver.Log(Format('[ProbeBatch] Prober started at %s', [Coord.ToString]));
-  try
+
     while not Coord.Break do
     begin
-      if Fobserver.ShouldAbort then
-      Break;
-      Fobserver.Log(Format('  [%d] %s ... ',
-                   [i + 1, Coord.ToString]));
-
-      M := ProbeResistance(AParams);
-      SetLength(Result, Length(Result) + 1);
-      CycleResult.ProbingResult := M;
-      CycleResult.Coord := Coord;
-      Result[High(Result)]:= CycleResult;
-      HWResCycle.CommandType:=hcProbeBatchCycle;
-      HWResCycle.ProbedJunctionResult:=CycleResult;
-      FObserver.TaskFinished(HWResCycle);
       try
+        if Fobserver.ShouldAbort then
+        Break;
+        Fobserver.Log(Format('  [%d] %s ... ',
+                     [i + 1, Coord.ToString]));
+
+        M := ProbeResistance(AParams);
+        SetLength(Result, Length(Result) + 1);
+        CycleResult.ProbingResult := M;
+        CycleResult.Coord := Coord;
+        Result[High(Result)]:= CycleResult;
+        HWResCycle.CommandType:=hcProbeBatchCycle;
+        HWResCycle.ProbedJunctionResult:=CycleResult;
+        FObserver.TaskFinished(HWResCycle);
         Coord := FProber.NextSubsite;
-      except
-        on E: SysUtils.Exception do
-        begin
-          WriteLn('[ProbeBatch] Prober move failed: ' + E.Message +
-                  '. Stopping.');
-          Break;
-        end;
-      end;
+       except
+          on E: SysUtils.Exception do
+          begin
+            Fobserver.Log('[ProbeBatch] Prober move failed: ' + E.Message +
+                    '. Stopping.');
+            Break;
+          end
+       end;
     end;
   finally
-  end;
-
   FProber.Finish;
   Fobserver.Log(Format('[ProbeBatch] Done. %d junctions measured.',
                  [Length(Result)]));
   HWRes.CommandType:=hcProbeBatch;
   HWRes.ProbingResultArray:=Result;
   FObserver.TaskFinished(HWRes);
+  end;
+
+
 
 end;
 

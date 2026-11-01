@@ -47,9 +47,9 @@ begin
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
-  Chart.Plot.Title := 'Almost everyone is online';
-  Chart.Plot.Subtitle := 'Share of the population using the internet, 2020';
-  Chart.Plot.Source := 'Source: World Bank';
+  Chart.Plot.Title := 'Resistance';
+  //Chart.Plot.Subtitle := 'Share of the population using the internet, 2020';
+  //Chart.Plot.Source := 'Source: World Bank';
   {Chart.Plot.Categories := ['Sweden', 'Spain', 'Belgium', 'Netherlands'];}
   Chart.Plot.AddSeries('2020', [94.5, 93.2, 91.5, 91.3]);
   {Chart.Plot.AddLineSeries();}

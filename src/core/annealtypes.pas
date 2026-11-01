@@ -58,6 +58,7 @@ type
   TSampleArray  = array of TSamplePoint;
 
   TProberCoord = record
+    TaskName             : string; //comes from input pane start_apw.exe
     Chip_X,Chip_Y        : Integer;
     Subsite_X,Subsite_Y  : Double;
     Subsite              : string;

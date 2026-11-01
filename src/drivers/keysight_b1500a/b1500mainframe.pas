@@ -125,13 +125,14 @@ begin
   mb := TMessageBuilder.Create;
   try
     Write(mb.Rst.Fmt().Message);
+    FindModules;
     EnableChannels([Channel_1,Channel_2]);
     SetMeasurementConfig;
     AllChannelSaveAndZero;
   finally
     mb.Free;
   end;
-  FindModules;
+
 end;
 
 destructor TB1500.Destroy;
@@ -248,8 +249,6 @@ var
 begin
  mb := TMessageBuilder.Create;
   try
-
-    Sleep(30);
     write(mb
          .MY_AAD(Channel_1)
          .MY_AIT(Channel_2)
@@ -328,6 +327,7 @@ begin
   end;
   Write('CN ' + ChList);
   FSMU1.IsEnabled:=True; FSMU2.IsEnabled:=True;
+  Sleep(30);
 
 end;
 

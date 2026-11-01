@@ -8,8 +8,7 @@ uses
   TaskSelectDialogUnit, AnnealConfig, ResultViewer,logview, threadinghelper,
   MeasurementObserver,AnnealManager,AnnealTypes,nodejunctionmapper,
   System.ImageList, Vcl.ImgList, Vcl.ToolWin, Mitov.VCLTypes,
-  VCL.LPControl, SLControlCollection, LPControlDrawLayers, SLBasicDataDisplay,
-  SLDataDisplay, SLDataChart, SLScope, System.Types,System.Generics.Collections,
+ System.Types,System.Generics.Collections,
   DeviceManagerUnit, Chart4D.Types,Chart4D.Style,Chart4D.VCL, Chart4D.Series,
   Vcl.VirtualImageList, Vcl.BaseImageCollection, Vcl.ImageCollection;
 
@@ -74,6 +73,7 @@ type
     procedure DeviceTreeViewEdited(Sender: TObject; Node: TTreeNode;
       var S: string);
     procedure AbortButtonClick(Sender: TObject);
+    procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
   private
     FDeviceNode: TTreeNode;
     FSetupStatus: TSetupStatusManager;
@@ -94,6 +94,7 @@ type
     procedure AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
     function AddJunctionNode(ANode: TTreeNode;JunctionEntry:TJunctionEntry):TTreeNode;
     function IsMetadataNode(ANode: TTreeNode): Boolean;
+    procedure StopHWThread;
   protected
      { Override TComponent interface methods to disable reference counting }
     function QueryInterface(const IID: TGuid; out Obj): HResult; stdcall;
@@ -152,6 +153,26 @@ implementation
 
 { TMainWindowForm }
 
+procedure TMainWindowForm.FormCloseQuery(Sender: TObject;
+  var CanClose: Boolean);
+begin
+  if not FDeviceManager.isSaved then
+  begin
+    case MessageDlg(
+      'You have unsaved changes. Quit without saving?',
+      mtConfirmation,
+      [mbYes, mbNo],
+      0) of
+
+      mrYes:
+        CanClose := True;
+
+      mrNo:
+        CanClose := False;
+    end;
+  end;
+end;
+
 procedure TMainWindowForm.FormCreate(Sender: TObject);
 begin
 
@@ -174,8 +195,8 @@ begin
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
-  Chart.Plot.Title := 'Live Data';
-  Chart.Plot.Subtitle := 'From Parameter Analyzer';
+  Chart.Plot.Title := 'Live Graph';
+  Chart.Plot.Subtitle := 'Parameter Analyzer';
   //Chart.Plot.Source := 'Source: World Bank';
   //Chart.Plot.Categories := ['1', '2'];
   //Chart.Plot.AddSeries('2020', [0,100]);
@@ -200,23 +221,33 @@ procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
 begin
 
    FCurrentThread.ResetAbort;
+   DeviceTreeView.Selected := DeviceTreeView.Items.GetFirstNode;
+   RunSingleButton.Enabled := False;
+   RunBatchButton.Enabled := False;
 
    case (THardwareTask(TaskPointer)).TaskType of
        TNodeType.ntProbe:
          begin
+         TProbeTask(TaskPointer).Result := Default(TProbingResult);
          FCurrentThread.Probe((TProbeTask(TaskPointer)).Config);
          end;
        TNodeType.ntAnneal:
          begin
+         TAnnealTask(TaskPointer).Result := Default(TAnnealResult);
          FCurrentThread.Anneal((TAnnealTask(TaskPointer)).Config);
+
          end;
        TNodeType.ntBatchAnneal:
          begin
+         TBatchAnnealTask(TaskPointer).Result := Default(TAnnealResultArray);
          FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Config);
+
          end;
        TNodeType.ntBatchProbe:
          begin
+         TBatchProbeTask(TaskPointer).Result := Default(TProbingResultArray);
          FCurrentThread.ProbeBatch((TBatchProbeTask(TaskPointer)).Config);
+
          end;
    end;
 end;
@@ -254,14 +285,17 @@ end;
 procedure TMainWindowForm.AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
 var
   CreatedNode, ModifiedNode: TTreeNode;
+  DisplayTime: String;
 begin
   if ANode = nil then Exit;
 
-  CreatedNode := DeviceTreeView.Items.AddChild(ANode, 'Created: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', ACreatedAt));
-  CreatedNode.ImageIndex := 5; { Gray info icon }
-  CreatedNode.SelectedIndex := CreatedNode.ImageIndex;
-
-  ModifiedNode := DeviceTreeView.Items.AddChild(ANode, 'Modified: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', AModifiedAt));
+  //CreatedNode := DeviceTreeView.Items.AddChild(ANode, 'Created: ' + FormatDateTime('yyyy-mm-dd hh:mm:ss', ACreatedAt));
+  //CreatedNode.ImageIndex := 5; { Gray info icon }
+  //CreatedNode.SelectedIndex := CreatedNode.ImageIndex;
+  DisplayTime :=   ifthen(AModifiedAt <> 0, FormatDateTime('yyyy-mm-dd hh:mm:ss',AModifiedAt ),
+        FormatDateTime('yyyy-mm-dd hh:mm:ss',ACreatedAt ) );
+  ModifiedNode := DeviceTreeView.Items
+    .AddChildFirst (ANode,DisplayTime);
   ModifiedNode.ImageIndex := 5; { Gray info icon }
   ModifiedNode.SelectedIndex := ModifiedNode.ImageIndex;
 end;
@@ -488,6 +522,7 @@ var
   AnnealTask : TAnnealTask;
   BatchAnnealTask : TBatchAnnealTask;
   ProbeTask : TProbeTask;
+  BatchProbeTask : TBatchProbeTask;
   Task      : THardwareTask;
   AnnealParameters : TAnnealConfig;
   AnnealParameterArray :  TAnnealConfigArray;
@@ -514,56 +549,77 @@ begin
   end;
   if Node.Level = 2 then
   begin
-    if (Node.Text = 'Config') and (Node.Parent.Text = 'Single Anneal') then
-    begin
-      { Open configuration form }
-      AnnealTask :=  TAnnealTask(Node.Parent.Data);
-      AnnealConfigForm.InitializeFromConfig(
-         AnnealTask.Config,Node.Parent.Text);
-      if AnnealConfigForm.ShowModal = mrOk then
-      begin
-        AnnealConfigForm.RowToParamRecord(1,AnnealParameters,
-                                          ErrorMsg,ErrorCol);
-        if ErrorMsg = '' then
-        Begin
-        ShowMessage('Configuration saved.');
-        AnnealTask.Config := AnnealParameters;
-        End Else ShowMessage(ErrorMsg);
-      end;
-    end else
-      if (Node.Text = 'Config') and (Node.Parent.Text = 'Batch Anneal') then
-    begin
-      { Open configuration form }
-      BatchAnnealTask :=  TBatchAnnealTask(Node.Parent.Data);
-      AnnealConfigForm.InitializeFromConfig(
-         BatchAnnealTask.Config,Node.Parent.Text);
-      if AnnealConfigForm.ShowModal = mrOk then
-      begin
-        AnnealConfigForm.GridToParamArray(AnnealParameterArray,
-                                          ErrorMsg,ErrorRow,ErrorCol);
-        if ErrorMsg = '' then
-        Begin
-        ShowMessage('Configuration saved.');
-        BatchAnnealTask.Config := AnnealParameterArray;
-        End Else ShowMessage(ErrorMsg);
-      end;
-    end  else
     if (Node.Text = 'Config') then
-    begin
-      { Open configuration form }
-      ProbeTask :=  TProbeTask(Node.Parent.Data);
-      ProbeConfigForm.InitializeFromConfig(
-         ProbeTask.Config,Node.Parent.Text);
-      if ProbeConfigForm.ShowModal = mrOk then
-      begin
-        ProbeConfigForm.SaveToConfig(ProbingParameters,
-                                          ErrorMsg);
-        if ErrorMsg = '' then
-        Begin
-        ShowMessage('Configuration saved.');
-        ProbeTask.Config := ProbingParameters;
-        End Else ShowMessage(ErrorMsg);
-      end;
+      case THardwareTask(Node.Parent.Data).TaskType of
+
+      TNodeType.ntAnneal:
+        begin
+        { Open configuration form }
+        AnnealTask :=  TAnnealTask(Node.Parent.Data);
+        AnnealConfigForm.InitializeFromConfig(
+           AnnealTask.Config,Node.Parent.Text);
+        if AnnealConfigForm.ShowModal = mrOk then
+        begin
+          AnnealConfigForm.RowToParamRecord(1,AnnealParameters,
+                                            ErrorMsg,ErrorCol);
+          if ErrorMsg = '' then
+          Begin
+          ShowMessage('Configuration saved.');
+          AnnealTask.Config := AnnealParameters;
+          End Else ShowMessage(ErrorMsg);
+        end;
+        end;
+      TNodeType.ntBatchAnneal:
+        begin
+          { Open configuration form }
+          BatchAnnealTask :=  TBatchAnnealTask(Node.Parent.Data);
+          AnnealConfigForm.InitializeFromConfig(
+             BatchAnnealTask.Config,Node.Parent.Text);
+          if AnnealConfigForm.ShowModal = mrOk then
+          begin
+            AnnealConfigForm.GridToParamArray(AnnealParameterArray,
+                                              ErrorMsg,ErrorRow,ErrorCol);
+            if ErrorMsg = '' then
+            Begin
+            ShowMessage('Configuration saved.');
+            BatchAnnealTask.Config := AnnealParameterArray;
+            End Else ShowMessage(ErrorMsg);
+          end;
+        end;
+       TNodeType.ntProbe:
+         begin
+        { Open configuration form }
+        ProbeTask :=  TProbeTask(Node.Parent.Data);
+        ProbeConfigForm.InitializeFromConfig(
+           ProbeTask.Config,Node.Parent.Text);
+        if ProbeConfigForm.ShowModal = mrOk then
+          begin
+            ProbeConfigForm.SaveToConfig(ProbingParameters,
+                                              ErrorMsg);
+            if ErrorMsg = '' then
+            Begin
+            ShowMessage('Configuration saved.');
+            ProbeTask.Config := ProbingParameters;
+            End Else ShowMessage(ErrorMsg);
+          end;
+        end;
+        TNodeType.ntBatchProbe:
+         begin
+        { Open configuration form }
+        BatchProbeTask :=  TBatchProbeTask(Node.Parent.Data);
+        ProbeConfigForm.InitializeFromConfig(
+           BatchProbeTask.Config,Node.Parent.Text);
+        if ProbeConfigForm.ShowModal = mrOk then
+          begin
+            ProbeConfigForm.SaveToConfig(ProbingParameters,
+                                              ErrorMsg);
+            if ErrorMsg = '' then
+            Begin
+            ShowMessage('Configuration saved.');
+            ProbeTask.Config := ProbingParameters;
+            End Else ShowMessage(ErrorMsg);
+          end;
+        end;
     end
     else if Node.Text = 'Result' then
     begin
@@ -580,15 +636,28 @@ end;
 
 procedure TMainWindowForm.ConnectButtonClick(Sender: TObject);
 begin
+
+
   if not Assigned(FCurrentThread) then
-    FCurrentThread := THardwareThread.Create(Self);
-    FCurrentThread.OnTerminate := Self.OnThreadTerminate;
+  begin
+       FCurrentThread := THardwareThread.Create(Self);
+       FCurrentThread.OnTerminate := Self.OnThreadTerminate;
+  end
+  else if FOperationManager.IsTaskRunning then
+  begin
+    ShowMessage('Task Running! Wait for completion.');
+  end else
+  begin
+    StopHWThread;
+    ConnectButton.ImageIndex := 6;
+    exit;
+  end;
 
   try
     if not FCurrentThread.Started then
      FCurrentThread.Start;
      FCurrentThread.Initialize;
-     ConnectButton.Enabled := False;
+
   except
     on E: Exception do
       ShowMessage('Connection error: ' + E.Message);
@@ -605,16 +674,21 @@ begin
   end;
 end;
 
-procedure TMainWindowForm.FormDestroy(Sender: TObject);
+procedure TMainWindowForm.StopHWThread;
 begin
-  if Assigned(FCurrentThread) then
+   if Assigned(FCurrentThread) then
   begin
     FCurrentThread.StopThread;
     FCurrentThread.WaitFor;
-    FCurrentThread.Free;
+    FreeAndNil(FCurrentThread);
 
 
   end;
+end;
+
+procedure TMainWindowForm.FormDestroy(Sender: TObject);
+begin
+  StopHWThread;
   FJunctionNodeList.Free;
   FDeviceManager.Free;
 end;
@@ -852,14 +926,15 @@ begin
       // This executes safely in the UI thread
       if FCurrentThread.FatalException is Exception then
         ShowMessage('Thread crashed: ' + Exception(FCurrentThread.FatalException).Message);
+      // 4. CRITICAL CLEANUP: Clear our pointer and free the memory object!
+      // Since we are inside the thread's own final event notification,
+      // we use DisposeOf / Free on a local scoped variable.
+      FCurrentThread := nil;
+      CrashedThread.Free;
+      ConnectButton.Enabled := True;
     end;
   finally
-    // 4. CRITICAL CLEANUP: Clear our pointer and free the memory object!
-    // Since we are inside the thread's own final event notification,
-    // we use DisposeOf / Free on a local scoped variable.
-    FCurrentThread := nil;
-    CrashedThread.Free;
-    ConnectButton.Enabled := True;
+
   end;
 end;
 
@@ -878,7 +953,8 @@ procedure TMainWindowForm.InitializeSetup(
   Status: TSetupStatus);
 begin
     FSetupStatus.SetupStatus := Status;
-    ConnectButton.Enabled := True;
+    if FSetupStatus.SingleProbeAllowed then
+        ConnectButton.ImageIndex := 2;
     EquipmentStatusBar.Repaint;
 end;
 
@@ -921,9 +997,14 @@ procedure TMainWindowForm.TaskFinished(
   Result: THardwareResult);
  begin
    FOperationManager.ActiveTask.SetResult(Result);
-   FOperationManager.IsTaskRunning:=False;
-   FOperationManager.ActiveTask := nil;
+   if (Result.CommandType<> hcAnnealBatchCycle)
+    and (Result.CommandType<> hcProbeBatchCycle) then
+    begin
+      FOperationManager.IsTaskRunning:=False;
+      FOperationManager.ActiveTask := nil;
+    end;
    RefreshTreeView;
+   Chart.Plot.ClearSeries;
 
  end;
 

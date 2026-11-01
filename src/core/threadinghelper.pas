@@ -142,8 +142,22 @@ begin
 end;
 
 procedure THardwareThread.StopThread;
+//begin
+//  Terminate;
+//  FCommandEvent.SetEvent;
+var
+  Command: THardwareCommand;
 begin
-  Terminate;
+  Command.CommandType := hcShutdown;
+  {}
+
+  FCommandLock.Acquire;
+  try
+    FCommandQueue.Enqueue(Command);
+  finally
+    FCommandLock.Release;
+  end;
+
   FCommandEvent.SetEvent;
 end;
 

@@ -233,8 +233,17 @@ end;
 
 destructor TVisaTransport.Destroy;
 begin
-  if FInstr <> VI_NULL then viClose(FInstr);
-  if FRM    <> VI_NULL then viClose(FRM);
+  if FInstr <> VI_NULL then
+  begin
+    viClear(FInstr);
+    viClose(FInstr);
+  end;
+  if FRM    <> VI_NULL then
+  begin
+    viClear(FRM);
+    viClose(FRM);
+  end;
+
   inherited;
 end;
 

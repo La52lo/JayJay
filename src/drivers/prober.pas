@@ -147,20 +147,30 @@ begin
     // The read handle must NOT be inherited.
     SetHandleInformation(ReadPipe, HANDLE_FLAG_INHERIT, 0);
 
-    ZeroMemory(@SI, SizeOf(SI));
+   { ZeroMemory(@SI, SizeOf(SI));
     SI.cb := SizeOf(SI);
     SI.dwFlags := STARTF_USESTDHANDLES;
     SI.hStdOutput := WritePipe;
     SI.hStdError := WritePipe;
 
-    ZeroMemory(@PI, SizeOf(PI));
+    ZeroMemory(@PI, SizeOf(PI)); }
+        // 1. Completely zero out SI and PI structure blocks
+    FillChar(SI, SizeOf(SI), 0);
+    SI.cb := SizeOf(SI);
+    SI.dwFlags := STARTF_USESTDHANDLES or STARTF_USESHOWWINDOW;
+    SI.wShowWindow := SW_HIDE; // Forces hidden execution safely
+    SI.hStdOutput := WritePipe;
+    SI.hStdError := WritePipe;
+    SI.hStdInput := GetStdHandle(STD_INPUT_HANDLE); // Safeguard input handle pipeline
+
+    FillChar(PI, SizeOf(PI), 0);
 
     CmdLine :=
       '"' +
       IncludeTrailingPathDelimiter(FExeDir) +
       AExeName +
       '"';
-
+    UniqueString(CmdLine);
     if not CreateProcess(
       nil,
       PChar(CmdLine),
@@ -197,11 +207,8 @@ begin
         if BytesRead > 0 then
         begin
           SetLength(Output, OutputLength + BytesRead);
-          Move(
-            Buffer[0],
-            Output[OutputLength],
-            BytesRead
-          );
+          // Pass the address of the buffer array and the destination array slot
+          System.Move(Buffer[0], Output[OutputLength], BytesRead);
           Inc(OutputLength, BytesRead);
         end;
 
@@ -229,14 +236,16 @@ begin
     if WritePipe <> 0 then
       CloseHandle(WritePipe);
   end;
-
+  {
   if Result <> 0 then
-    WriteLn(
+
+    raise EInvalidOp.CreateFmt(
       Format(
         '[ProberController] Warning: %s returned code %d.',
         [AExeName, Result]
-      )
-    );
+      ),
+      [AExeName]
+    );        }
 end;
 
 // ---------------------------------------------------------------------------
@@ -277,7 +286,7 @@ end;
 class function TProberController.ParseCoord(
   const AStdOut: string): TProberCoord;
 var
-  CoordStr: string;
+  CoordStr,TaskName: string;
   Tokens: TArray<string>;
   Match: TMatch;
   SubsiteTokens: TArray<string>;
@@ -290,9 +299,12 @@ begin
     Exit;
   end;
 
+
+  Result.TaskName := Trim(AStdOut.Split(['<Target>', ':'])[1]);
+
   // x and y: everything after the last " : "
   CoordStr := Trim(
-    StringAfterLast(AStdOut, ' : ')
+    StringAfterLast(AStdOut, ':')
   );
 
   if CoordStr = '' then
@@ -312,8 +324,8 @@ begin
       [CoordStr]
     );
 
-  Result.Chip_X := StrToInt(Tokens[0]);
-  Result.Chip_Y := StrToInt(Tokens[1]);
+  Result.Chip_X := StrToInt(Trim(Tokens[0]));
+  Result.Chip_Y := StrToInt(Trim(Tokens[1]));
 
   // -------------------------------------------------------------------------
   // Subsite
@@ -335,14 +347,20 @@ begin
     TStringSplitOptions.ExcludeEmpty
   );
 
-  if Length(SubsiteTokens) < 3 then
+  if Length(SubsiteTokens) < 2 then
     raise EInvalidOp.CreateFmt(
       'Invalid <Subsite> data: %s',
       [Match.Groups[1].Value]
     );
 
   Result.Subsite := SubsiteTokens[0];
+   // 1. Slice the string into two 6-character parts (0-based indexing)
 
+  // 2. Convert to integer and divide by 1000 to shift the decimal point
+  Result.Subsite_X := StrToInt(SubsiteTokens[1].Substring(0, 6)) / 1000.0; // 600 / 1000 = 0.6
+  Result.Subsite_Y := StrToInt(SubsiteTokens[1].Substring(6, 6)) / 1000.0; // 400 / 1000 = 0.4
+
+  {
   Result.Subsite_X :=
     StrToInt(
   TrimLeftZeros(Copy(SubsiteTokens[1], 1, 5)) +
@@ -352,7 +370,7 @@ begin
   StrToInt(
     TrimLeftZeros(Copy(SubsiteTokens[2], 1, 7)) +
     Copy(SubsiteTokens[2], 7, 12)
-  );
+  );        }
 end;
 
 // ---------------------------------------------------------------------------
@@ -371,13 +389,13 @@ end;
 
 function TProberController.NextSubsite: TProberCoord;
 begin
-  SleepSeconds(0.1);
+  //SleepSeconds(0.1);
 
-  RunExe('Subsite_apw.exe');
-
-  SleepSeconds(0.1);
-
-  Result := ParseCoord(FLastStdOut);
+  if RunExe('Subsite_apw.exe')=1 then
+    Result.Break := True
+  else
+  //SleepSeconds(0.1);
+    Result := ParseCoord(FLastStdOut);
 end;
 
 // ---------------------------------------------------------------------------
