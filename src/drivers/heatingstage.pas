@@ -13,6 +13,8 @@ type
     procedure RequireConnection;
     function GetConnected: Boolean;
   public
+    const IDN: string = 'ATC-1000A Ver:3.15(2023/04/06)';
+
     constructor Create(const AAddress: string);
     destructor  Destroy; override;
 
@@ -58,10 +60,21 @@ end;
 
 
 procedure THeatingStage.Connect;
+var
+  ActualIDN: string;
 begin
+  Disconnect;
   FInstrument := TVisaTransport.Create(FAddress);
-  {FInstrument.Open; }
-  {WriteLn('Heating stage connected at ' + FAddress); }
+  try
+    ActualIDN := Trim(FInstrument.Ask('*IDN?'));
+    if ActualIDN <> IDN then
+      raise EInvalidOp.CreateFmt(
+        'Unexpected heating stage IDN. Expected "%s", received "%s".',
+        [IDN, ActualIDN]);
+  except
+    Disconnect;
+    raise;
+  end;
 end;
 
 function THeatingStage.GetConnected: Boolean;

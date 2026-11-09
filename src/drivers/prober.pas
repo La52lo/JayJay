@@ -28,6 +28,8 @@ type
     class function StringAfterLast(const S, Marker: string): string; static;
 
   public
+    const IDN: string = '(APOLLOWAVE, AP200, Ver:2.4.17.0)';
+
     constructor Create(const AExeDir: string;AAddress:string);
 
     procedure CheckProberExecutables;
@@ -73,8 +75,21 @@ end;
 // ---------------------------------------------------------------------------
 
 procedure TProberController.Connect;
+var
+  ActualIDN: string;
 begin
+  Disconnect;
   FInstrument := TVisaTransport.Create(FAddress);
+  try
+    ActualIDN := Trim(FInstrument.Ask('*IDN?'));
+    if ActualIDN <> IDN then
+      raise EInvalidOp.CreateFmt(
+        'Unexpected prober IDN. Expected "%s", received "%s".',
+        [IDN, ActualIDN]);
+  except
+    Disconnect;
+    raise;
+  end;
 end;
 
 // ---------------------------------------------------------------------------
@@ -408,3 +423,4 @@ begin
 end;
 
 end.
+
