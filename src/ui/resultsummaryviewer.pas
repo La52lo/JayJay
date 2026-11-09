@@ -5,12 +5,15 @@ interface
 uses
   System.Classes,
   System.SysUtils,
+  System.Types,
   Vcl.Forms,
   Vcl.Controls,
+  Vcl.ComCtrls,
   Vcl.Grids,
   DeviceManagerUnit;
 
 procedure ShowTaskResultSummary(ATask: THardwareTask);
+procedure InstallTaskResultSummaryHook(ATree: TTreeView);
 
 type
   TTaskResultSummaryForm = class(TForm)
@@ -31,8 +34,19 @@ type
 implementation
 
 uses
+  Winapi.Windows,
   Vcl.StdCtrls,
   AnnealTypes;
+
+type
+  TTaskResultSummaryHook = class(TComponent)
+  private
+    FTree: TTreeView;
+    FPreviousOnDblClick: TNotifyEvent;
+    procedure TreeDblClick(Sender: TObject);
+  public
+    constructor Create(AOwner: TComponent; ATree: TTreeView); reintroduce;
+  end;
 
 constructor TTaskResultSummaryForm.Create(AOwner: TComponent);
 begin
@@ -206,6 +220,40 @@ begin
   finally
     Form.Free;
   end;
+end;
+
+constructor TTaskResultSummaryHook.Create(AOwner: TComponent; ATree: TTreeView);
+begin
+  inherited Create(AOwner);
+  FTree := ATree;
+  FPreviousOnDblClick := FTree.OnDblClick;
+  FTree.OnDblClick := TreeDblClick;
+end;
+
+procedure TTaskResultSummaryHook.TreeDblClick(Sender: TObject);
+var
+  P: TPoint;
+  Node: TTreeNode;
+begin
+  GetCursorPos(P);
+  P := FTree.ScreenToClient(P);
+  Node := FTree.GetNodeAt(P.X, P.Y);
+
+  if Assigned(Node) and (Node.Text = 'Result') and
+     Assigned(Node.Parent) and (Node.Parent.Data <> nil) then
+  begin
+    ShowTaskResultSummary(THardwareTask(Node.Parent.Data));
+    Exit;
+  end;
+
+  if Assigned(FPreviousOnDblClick) then
+    FPreviousOnDblClick(Sender);
+end;
+
+procedure InstallTaskResultSummaryHook(ATree: TTreeView);
+begin
+  if (ATree <> nil) and (ATree.Owner <> nil) then
+    TTaskResultSummaryHook.Create(ATree.Owner, ATree);
 end;
 
 end.

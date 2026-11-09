@@ -32,8 +32,7 @@ uses
 {$R *.res}
 
 begin
-
-  Application.MainFormOnTaskbar:=False;
+  Application.MainFormOnTaskbar := False;
   Application.Initialize;
   TStyleManager.TrySetStyle('Iceberg Classico');
   Application.Title := 'JayJay';
@@ -43,6 +42,6 @@ begin
   Application.CreateForm(TLogViewForm, LogViewForm);
   Application.CreateForm(TTaskSelectDialog, TaskSelectDialog);
   Application.CreateForm(TResultViewerForm, ResultViewerForm);
+  InstallTaskResultSummaryHook(MainWindowForm.DeviceTreeView);
   Application.Run;
 end.
-
