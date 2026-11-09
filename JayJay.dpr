@@ -25,6 +25,7 @@ uses
   logview in 'src\ui\logview.pas' {LogViewForm},
   nodejunctionmapper in 'src\core\nodejunctionmapper.pas',
   resultviewer in 'src\ui\resultviewer.pas' {ResultViewerForm},
+  resultsummaryviewer in 'src\ui\resultsummaryviewer.pas',
   Vcl.Themes,
   Vcl.Styles;
 
