@@ -3,6 +3,7 @@ unit ResultSummaryViewer;
 interface
 
 uses
+  System.Classes,
   System.SysUtils,
   Vcl.Forms,
   Vcl.Controls,
