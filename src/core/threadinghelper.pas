@@ -36,7 +36,7 @@ type
     procedure Initialize;
     procedure Anneal(const Parameters: TAnnealConfig);
     procedure Probe(const Parameters: TProbingParameters);
-    procedure AnnealBatch(const Parameters: TAnnealConfigArray);
+    procedure AnnealBatch(const Parameters: TAnnealConfigArray;FinalTemperature:Double);
     procedure ProbeBatch(const Parameters: TProbingParameters);
 
     procedure AbortOperation;
@@ -122,11 +122,15 @@ begin
 
           hcAnnealBatch:
             FAnnealManager.AnnealBatch(
-              Command.AnnealConfigArray);
+              Command.AnnealConfigArray,Command.Temperature);
 
           hcProbeBatch:
             FAnnealManager.ProbeBatch(
               Command.ProbingParameters);
+
+          hcSetTemperature:
+            FAnnealManager.SetTemperature(
+              Command.Temperature);
 
           hcShutdown:
             begin
@@ -233,13 +237,14 @@ begin
 end;
 
 procedure THardwareThread.AnnealBatch(
-  const Parameters: TAnnealConfigArray);
+  const Parameters: TAnnealConfigArray;FinalTemperature:Double);
 var
   Command: THardwareCommand;
 begin
   Command.CommandType := hcAnnealBatch;
 
   Command.AnnealConfigArray := Parameters;
+  Command.Temperature := FinalTemperature;
   FCommandLock.Acquire;
   try
     FCommandQueue.Enqueue(Command);

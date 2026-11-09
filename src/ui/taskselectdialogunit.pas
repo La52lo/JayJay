@@ -21,7 +21,6 @@ type
     RadioButtonSingleResistance: TRadioButton;
     RadioButtonBatchResistance: TRadioButton;
   private
-    FSelectedTask: TTaskType;
   public
     function ShowTaskSelectDialog(out ANodeType: TNodeType): Boolean;
   end;

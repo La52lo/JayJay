@@ -11,7 +11,6 @@ object LogViewForm: TLogViewForm
   Font.Name = 'Segoe UI'
   Font.Style = []
   Position = poDesktopCenter
-  OnShow = FormShow
   TextHeight = 15
   object Memo1: TMemo
     AlignWithMargins = True

@@ -40,15 +40,6 @@ implementation
 
 procedure TProbeConfigForm.FormCreate(Sender: TObject);
 begin
-  with ProbeConfigEditor.ItemProps['Mode'] do
-  begin
-    EditStyle := TEditStyle.esPickList;
-    ReadOnly := True;
-    PickList.Add('Single');
-    PickList.Add('Batch');
-
-  end;
-  ProbeConfigEditor.Values['Mode']:='Single';
   DefaultResistanceConfig := TStringList.Create;
   DefaultResistanceConfig.Assign(ProbeConfigEditor.Strings);
 end;

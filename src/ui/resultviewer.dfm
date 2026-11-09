@@ -19,5 +19,7 @@ object ResultViewerForm: TResultViewerForm
     Height = 50
     Align = alBottom
     TabOrder = 0
+    ExplicitTop = 533
+    ExplicitWidth = 894
   end
 end

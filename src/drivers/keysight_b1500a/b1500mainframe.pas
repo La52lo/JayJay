@@ -94,7 +94,7 @@ type
     procedure SetMeasurementModeSpotIV(AChannel: TChannelNr; AMode: Integer);
     procedure EnableChannels(const AChannels: array of TChannelNr);
     procedure SetMeasurementConfig();
-    procedure SetIntegrationTimePLC(APLC: Double = 1.0;
+    procedure SetIntegrationTimePLC(APLC: Integer = 1;
       AADCType: TADCType = adcHighResolution);
     procedure AllChannelSaveAndZero;
     procedure AllChannelRestore;
@@ -273,13 +273,13 @@ end;
 { ------------------------------------------------------------------ }
 { Setting integration time                                                }
 { ------------------------------------------------------------------ }
- procedure TB1500.SetIntegrationTimePLC(APLC: Double = 1;
-                      AADCType: TADCType = adcHighResolution);
+ procedure TB1500.SetIntegrationTimePLC(APLC: Integer;
+                      AADCType: TADCType);
  var
   Cmd: String;
  begin
    Cmd := Format('AIT %d,2,%s',[Ord(AADCType),
-                  FloatToStr(APLC,TFormatSettings.Invariant)]);
+                  IntToStr(APLC)]);
    Write(Cmd);
  end;
 

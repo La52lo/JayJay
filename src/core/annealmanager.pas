@@ -13,11 +13,18 @@ uses
   MeasurementObserver; {class to receive measurement points}
 
 const
+{$IFDEF DEBUG}
   DEFAULT_ANALYZER_ADDRESS = 'GPIB0::16::INSTR';
+  DEFAULT_PROBER_DIR       = 'C:\Users\B1500\Documents\voltage_annealing\apollowave';
+
+{$ELSE}
+  DEFAULT_ANALYZER_ADDRESS = 'agb1500a';
+  DEFAULT_PROBER_DIR       =
+  'C:\Program Files\Agilent\B1500\EasyEXPERT\Utilities\ProberControl\apollowave';
+
+{$ENDIF}
   DEFAULT_HEATER_ADDRESS   = 'GPIB0::7::INSTR';
   DEFAULT_PROBER_ADDRESS   = 'GPIB0::5::INSTR';
-  DEFAULT_PROBER_DIR       =
-    'C:\Users\B1500\Documents\voltage_annealing\apollowave';
   DEFAULT_COMPLIANCE       = 0.05;   { 50 mA }
   DEFAULT_SETTLETIME       = 0.2;
 type
@@ -62,11 +69,11 @@ type
     { Measurement }
     function MeasureCurrent(ASmu: Integer;ARangeconfig:TIMeasRange=imr1mA): Double;
     function MeasureVoltageReadback(ASmu: Integer): Double;
-    function MeasureResistance(VSource: Double): Double;
+    function MeasureResistance(VSource,AInitialWait,AMeasureTime : Double): Double;
     function SweepVoltageMeasureResistance(
       const AVoltages: TArray<Double>;
-      ACompliance: Double = 0.05;
-      ASettleTimeSec: Double = 0.05 //sec
+      AInitialWait: Double = 0.5;
+      AMeasureTime  : Double =0.5 //sec
     ): TArray<Double>;
 
     property Address    : string  read FAddress;
@@ -111,11 +118,12 @@ type
     procedure AnnealPairs(AVPulseHigh,AVPulseLow, AT: Double;APairs:Integer;
           ASMU:TB1511B;Var Res : TAnnealResult);
     function AnnealSingle(const AParams: TAnnealConfig): TAnnealResult;
-    function AnnealBatch(const ASpecs : TAnnealConfigArray) : TAnnealResultArray;
+    function AnnealBatch(const ASpecs : TAnnealConfigArray;
+                                    FinalTemperature: Double = 22.0) : TAnnealResultArray;
     function ProbeSingle(AParams: TProbingParameters): TProbingResult;
     function ProbeBatch(AParams: TProbingParameters): TProbingResultArray;
     function IsDamaged(R, ThresholdOpen, ThresholdShort: Double): Boolean;
-
+    procedure setTemperature(Temp: Double);
     procedure SendZeroVoltage();
     procedure DisconnectAll;
 
@@ -168,28 +176,17 @@ end;
 procedure TB1500Controller.Connect;
 begin
   FB1500 := TB1500.Create(FAddress);   { driver constructor }
-  {FB1500.Open; }
-    // 1. Configure mainframe timing & mode
-
   FB1500.SetDataFormat('1,0');
-  //FB1500.SetIntegrationTimePLC(10, adcHighResolution);
-  //FB1500.SetIntegrationTimePLC(10, adcHighSpeed);
-
-
   FConnected := True;
-  {WriteLn('Connected to B1500A at ' + FAddress);}
 end;
 
 procedure TB1500Controller.SelfCalibrate;
 begin
   RequireConnection;
-  {WriteLn('Starting self-calibration (may take up to 30 s) ...'); }
   try
     FB1500.SelfCalibration;
-    {WriteLn('Self-calibration completed successfully.');}
   except
     on E: SysUtils.Exception do
-      {WriteLn('Self-calibration failed: ' + E.Message);}
   end;
 end;
 
@@ -283,46 +280,23 @@ begin
   Result := SMU.GetVoltage;
 end;
 
-function TB1500Controller.MeasureResistance(VSource: Double): Double;
+function TB1500Controller.MeasureResistance(VSource,AInitialWait,AMeasureTime : Double): Double;
 var
-  V1, V0, I: Double;
-begin
-  V1 := CheckVoltage(1, VSource);
-  V0 := MeasureVoltageReadback(2);
-  I  := MeasureCurrent(1);
-  Result := Abs((V1 - V0) / I);
-end;
-
-function TB1500Controller.SweepVoltageMeasureResistance(
-  const AVoltages: TArray<Double>;
-  ACompliance: Double;
-  ASettleTimeSec: Double
-): TArray<Double>;
-var
-  SMU1, SMU2: TB1511B;
-  I: Integer;
+  SMU1,SMU2: TB1511B;
   RawResp: string;
   Reading1, Reading2: TSMUSpotReading;
-  SettleMs: Cardinal;
+  SettleMs : Cardinal;
+  PLC      : Integer;
 begin
-  RequireConnection;
-  SetLength(Result, Length(AVoltages));
-  if Length(AVoltages) = 0 then
-    Exit;
-
   SMU1 := GetSMU(1);
   SMU2 := GetSMU(2);
-  SettleMs := Round(ASettleTimeSec * 1000);
-  try
-    for I := Low(AVoltages) to High(AVoltages) do
-    begin
-      Smu1.SetVoltage(AVoltages[I]);
+  SettleMs := Round(AInitialWait * 1000);
 
-
-      if (I = Low(AVoltages)) and (High(AVoltages) <> 0)
-         then  Sleep(2000)  //let it sit before first measuremnt
-      else if SettleMs > 0 then
-        Sleep(SettleMs);
+  //one power-line cycle is 20ms, Setting the number of PLC integrations.
+  PLC := Round(AMeasureTime / 0.02 );
+  FB1500.SetIntegrationTimePLC(PLC);
+  SMU1.SetVoltage(VSource);
+  if SettleMs > 0 then Sleep(SettleMs);
       // Trigger simultaneous acquisition across SMU1 & SMU2
       RawResp := FB1500.ExecuteMeasurementRaw;
       //Reading1:=FB1500.ExecuteSynchronousMeasurement
@@ -335,9 +309,31 @@ begin
       // Calculate junction resistance: R = |(V_smu1 - V_smu2) / I_smu1|
       if Abs(Reading1.Current) > 1e-14 then
         //Result[I] := Abs((AVoltages[I] - Reading2.Voltage) / Reading1.Current)
-        Result[I] := Abs((AVoltages[I]) / Reading1.Current)
+        Result := Abs((VSource - Reading2.Voltage) / Reading1.Current)
       else
-        Result[I] := 1e12; // Open circuit fallback
+        Result := 1e12; // Open circuit fallback
+end;
+
+function TB1500Controller.SweepVoltageMeasureResistance(
+  const AVoltages: TArray<Double>;
+  AInitialWait,AMeasureTime  : Double
+): TArray<Double>;
+var
+  I: Integer;
+  CycleWait : Double;
+begin
+  RequireConnection;
+  SetLength(Result, Length(AVoltages));
+  if Length(AVoltages) = 0 then
+    Exit;
+  try
+    for I := Low(AVoltages) to High(AVoltages) do
+    begin
+      if (I = Low(AVoltages)) and (High(AVoltages) <> 0)
+         then  CycleWait := AInitialWait  //let it sit before first measuremnt
+         else CycleWait := 0.3;
+
+      Result[I]:= MeasureResistance(AVoltages[I],CycleWait,AMeasureTime);
       FObserver.MeasurementPoint(AVoltages[I], Result[I]);
     end;
   finally
@@ -470,12 +466,20 @@ begin
   Result := (R > ThresholdOpen) or (R < ThresholdShort);
 end;
 
+procedure TAnnealManager.SetTemperature(Temp: Double);
+begin
+  try
+    FHeater.SetTemperature(Temp);
+    FObserver.Log('Heater set to '+ FloatToStr(Temp) + 'C');
+  except
+    FObserver.Log('Temperature setting failed');
+  end;
+end;
+
 function TAnnealManager.ProbeResistance(AParams: TProbingParameters):TProbingResult;
 var
   DefaultVoltages : TArray<Double>;
   Voltages        : TArray<Double>;
-  Count, i, j     : Integer;
-  V, R            : Double;
 
 begin
   if AParams.VoltageList = nil then
@@ -486,9 +490,12 @@ begin
   end
   else
     Voltages := TArray<Double>(AParams.VoltageList);
-  FAnalyzer.FB1500.AllChannelRestore;
+  FAnalyzer.FB1500.SetMeasurementConfig;
   try
-   Result.Readings := TDoubleArray(FAnalyzer.SweepVoltageMeasureResistance(Voltages));
+   Result.Readings := TDoubleArray(FAnalyzer.SweepVoltageMeasureResistance(
+                      Voltages,
+                      AParams.InitialWait,
+                      AParams.MeasureTime));
   finally
    //FAnalyzer.DisableOutputs;
    FAnalyzer.FB1500.AllChannelSaveAndZero
@@ -552,39 +559,35 @@ end;
 function TAnnealManager.Anneal(const AParams: TAnnealConfig): TAnnealResult;
 var
   Res               : TAnnealResult;
-  ProbingParameters : TProbingParameters;
-  ProbingResult     : TProbingResult;
+  //ProbingParameters : TProbingParameters;
+  //ProbingResult     : TProbingResult;
   CurrentTime       : Double;
   CurrentR          : Double;
-  Cycle, Pair       : Integer;
+  Cycle       : Integer;
   TotalPairs        : Integer;
   Stop              : Boolean;
-  //TStart            : Double;
-  Smu1, Smu2        : TB1511B;
+  TStart            : Double;
+  Smu1              : TB1511B;
 begin
   Res.TargetResistance := AParams.TargetResistance;
-
-  // Setup probing parameters once
-  SetLength(ProbingParameters.VoltageList, 1);
-  ProbingParameters.VoltageList[0]:= AParams.MeasureVoltage;  //[-0.01,-0.005,0.005,0.1];
-  ProbingParameters.InitialWait    := 0.5;
-  ProbingParameters.MeasureTime    := AParams.MeasureTime;            //0.5;
-
+  Cycle := 0;TotalPairs:=0;
   FObserver.TaskStarted();
   try
   // 1. Pre-enable channels and configure static ground reference on SMU2
   Smu1 := FAnalyzer.GetSMU(1);
-  FAnalyzer.FB1500.AllChannelRestore;
+  FAnalyzer.FB1500.SetMeasurementConfig;
   // 2. Initial baseline resistance measurement
+  TStart := NowSeconds;
   CurrentTime := NowSeconds;
+  FHeater.SetTemperature(AParams.Temperature);
   //ProbingResult := ProbeResistance(ProbingParameters);
-  ProbingResult.Readings := TDoubleArray(
-      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList),0.05
-      ,ProbingParameters.MeasureTime));
-  CurrentR := ProbingResult.MeanResistance;
-  Res.AddResistanceSample(CurrentTime, CurrentR);
-  Res.AppendCycleStats(CurrentR, ProbingResult.StdResistance);
-  FObserver.MeasurementPoint(CurrentTime / SecsPerDay, CurrentR);
+  CurrentR := FAnalyzer.MeasureResistance(
+              AParams.MeasureVoltage,
+              AParams.InitialWait,
+              AParams.MeasureTime);
+  Res.AddResistanceSample(CurrentTime-TStart, CurrentR);
+  Res.AppendCycleStats(CurrentR, 0);
+  FObserver.MeasurementPoint(CurrentTime-TStart, CurrentR);
 
   // If initial R already exceeds target, exit early
   if (Res.FinalResistance >= AParams.TargetResistance) then
@@ -612,7 +615,6 @@ begin
           FObserver.Log(Format('Error on  cycle (cycle %d): %s. Stopping.',
             [Cycle, E.Message]));
           FObserver.Error(E.Message);
-          Stop := True;
           Break;
         end;
     end;
@@ -622,15 +624,13 @@ begin
 
     // Resistance measurement at the end of the cycle
     CurrentTime := NowSeconds;
-    ProbingResult.Readings := TDoubleArray(
-      FAnalyzer.SweepVoltageMeasureResistance(TArray<Double>(ProbingParameters.VoltageList),0.05
-      ,ProbingParameters.MeasureTime));
-    CurrentR := ProbingResult.MeanResistance;
-
-    // Record correct per-cycle timestamp
-    Res.AddResistanceSample(CurrentTime, CurrentR);
-    Res.AppendCycleStats(CurrentR, ProbingResult.StdResistance);
-    FObserver.MeasurementPoint(CurrentTime / SecsPerDay, CurrentR);
+    CurrentR := FAnalyzer.MeasureResistance(
+              AParams.MeasureVoltage,
+              AParams.InitialWait,
+              AParams.MeasureTime);
+    Res.AddResistanceSample(CurrentTime-TStart, CurrentR);
+    Res.AppendCycleStats(CurrentR, 0);
+    FObserver.MeasurementPoint(CurrentTime-TStart, CurrentR);
     FObserver.Log(Format('Cycle %d/%d  R = %.1f Ohm', [Cycle + 1, AParams.Cycles, CurrentR]));
 
     // Early stop: target reached
@@ -674,7 +674,8 @@ begin
                   Result.FinalResistance]));
 end;
 
-function TAnnealManager.AnnealBatch(const ASpecs: TAnnealConfigArray
+function TAnnealManager.AnnealBatch(const ASpecs: TAnnealConfigArray;
+                                    FinalTemperature: Double
 ): TAnnealResultArray;
 var
   Coord           : TProberCoord;
@@ -696,7 +697,7 @@ begin
     Fobserver.Log(Format('--- [%d/%d] %s  coord=%s ---',
                    [i + 1, Length(ASpecs),
                     Coord.Subsite, Coord.ToString]));
-
+    FObserver.TaskStarted();
     BR := Anneal(ASpecs[i]);
     SetLength(Result, Length(Result) + 1);
     CycleResult.AnnealResult := BR;
@@ -721,6 +722,7 @@ begin
   end;
 
   FProber.Finish;
+  if finalTemperature <> 0 then SetTemperature(FinalTemperature);
   FObserver.Log('[AnnealBatch] Batch complete.');
   HWRes.CommandType:=hcAnnealBatch;
   HWRes.AnnealResultArray:=Result;
@@ -757,7 +759,7 @@ begin
         Break;
         Fobserver.Log(Format('  [%d] %s ... ',
                      [i + 1, Coord.ToString]));
-
+        FObserver.TaskStarted();
         M := ProbeResistance(AParams);
         SetLength(Result, Length(Result) + 1);
         CycleResult.ProbingResult := M;

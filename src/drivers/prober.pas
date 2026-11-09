@@ -286,10 +286,12 @@ end;
 class function TProberController.ParseCoord(
   const AStdOut: string): TProberCoord;
 var
-  CoordStr,TaskName: string;
+  CoordStr: string;
   Tokens: TArray<string>;
   Match: TMatch;
   SubsiteTokens: TArray<string>;
+  StartDigit: Integer;
+  NumberDigits: Integer;
 begin
   Result.Break := False;
 
@@ -357,20 +359,18 @@ begin
    // 1. Slice the string into two 6-character parts (0-based indexing)
 
   // 2. Convert to integer and divide by 1000 to shift the decimal point
-  Result.Subsite_X := StrToInt(SubsiteTokens[1].Substring(0, 6)) / 1000.0; // 600 / 1000 = 0.6
-  Result.Subsite_Y := StrToInt(SubsiteTokens[1].Substring(6, 6)) / 1000.0; // 400 / 1000 = 0.4
-
-  {
-  Result.Subsite_X :=
-    StrToInt(
-  TrimLeftZeros(Copy(SubsiteTokens[1], 1, 5)) +
-  Copy(SubsiteTokens[1], 5, 6)
-) ;
-  Result.Subsite_Y :=
-  StrToInt(
-    TrimLeftZeros(Copy(SubsiteTokens[2], 1, 7)) +
-    Copy(SubsiteTokens[2], 7, 12)
-  );        }
+  StartDigit := 6;
+  NumberDigits := 6;
+  if SubsiteTokens[1][1] = '-' then
+  begin
+    NumberDigits :=7;
+  end;
+  Result.Subsite_X := StrToInt(SubsiteTokens[1].Substring(0, NumberDigits)) / 1000.0; // 600 / 1000 = 0.6
+  StartDigit := NumberDigits;
+  if SubsiteTokens[1][NumberDigits+1] = '-' then
+    NumberDigits :=7
+  else NumberDigits := 6;
+  Result.Subsite_Y := StrToInt(SubsiteTokens[1].Substring(StartDigit, NumberDigits)) / 1000.0; // 400 / 1000 = 0.4
 end;
 
 // ---------------------------------------------------------------------------

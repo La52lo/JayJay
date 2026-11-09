@@ -30,14 +30,14 @@ object ProbeConfigForm: TProbeConfigForm
     Font.Style = []
     ParentFont = False
     Strings.Strings = (
-      'Mode='
       'Starting voltage [V]=-0.01'
       'Step size [V]=0.001'
       'Number of steps=20'
       'Measure Time [s]=0.5'
       'Initial Wait [s]=1.0')
     TabOrder = 0
-    ExplicitHeight = 373
+    ExplicitWidth = 367
+    ExplicitHeight = 333
     ColWidths = (
       180
       187)
@@ -50,12 +50,13 @@ object ProbeConfigForm: TProbeConfigForm
     Align = alBottom
     BevelOuter = bvNone
     TabOrder = 1
-    ExplicitTop = 346
+    ExplicitTop = 333
+    ExplicitWidth = 367
     DesignSize = (
       373
       37)
     object Button1: TButton
-      Left = 199
+      Left = 187
       Top = 6
       Width = 75
       Height = 25
@@ -64,10 +65,10 @@ object ProbeConfigForm: TProbeConfigForm
       Default = True
       ModalResult = 1
       TabOrder = 0
-      ExplicitLeft = 205
+      ExplicitLeft = 181
     end
     object Button2: TButton
-      Left = 286
+      Left = 274
       Top = 6
       Width = 75
       Height = 25
@@ -76,7 +77,7 @@ object ProbeConfigForm: TProbeConfigForm
       Caption = 'Cancel'
       ModalResult = 2
       TabOrder = 1
-      ExplicitLeft = 292
+      ExplicitLeft = 268
     end
   end
 end

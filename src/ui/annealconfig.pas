@@ -29,7 +29,6 @@ type
       Shift: TShiftState);
   private
     FModified: Boolean;
-    FAnnealConfig: TAnnealConfig;
     FAnnealConfigArray: TAnnealConfigArray;
     procedure LoadGridFromConfig(AConfig: TAnnealConfigArray);
     {procedure SaveCurrentConfig; }
@@ -419,18 +418,6 @@ function TAnnealConfigForm.GridToParamArray(
             out ErrorCol: Integer
             ): Boolean;
 var
-    TargetResistance   : Double;
-    Temperature        : Double;
-    MeasureVoltage     : Double;
-    MeasureTime        : Double;
-    PulsePositive      : Double;
-    PulseNegative      : Double;
-    PulseLength        : Double;
-    PulsePairs         : Integer;
-    Cycles             : Integer;
-    ThresholdOpen      : Double;
-    ThresholdShort     : Double;
-    InitialWait        : Double;    { s,  default 1.0    }
     tempRecord     : TAnnealConfig;
     Row                : Integer;
 begin

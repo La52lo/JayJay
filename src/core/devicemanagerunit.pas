@@ -176,17 +176,17 @@ begin
   with FConfig do
     begin
       TargetResistance:= 4500;
-      Temperature:= 70;
+      Temperature:= 60;
       PulseNegative:= -0.6;
       PulsePositive:= 0.6;
       PulseLength:= 2.0;
-      PulsePairs:= 500;
-      Cycles:= 2;
+      PulsePairs:= 2;
+      Cycles:= 300;
       MeasureVoltage:= 0.1;
-      MeasureTime:= 1.0;
+      MeasureTime:= 0.5;
       ThresholdShort:= 500.0;
       ThresholdOpen := 20000.0;
-      InitialWait := 1.0;
+      InitialWait := 2.0;
     end;
 end;
 
@@ -200,17 +200,17 @@ begin
   with FConfig[0] do
     begin
       TargetResistance:= 4500;
-      Temperature:= 70;
+      Temperature:= 60;
       PulseNegative:= -0.6;
       PulsePositive:= 0.6;
       PulseLength:= 2.0;
-      PulsePairs:= 500;
-      Cycles:= 2;
+      PulsePairs:= 2;
+      Cycles:= 300;
       MeasureVoltage:= 0.1;
-      MeasureTime:= 1.0;
+      MeasureTime:= 0.5;
       ThresholdShort:= 500.0;
       ThresholdOpen := 20000.0;
-      InitialWait := 1.0;
+      InitialWait := 2.0;
     end;
 end;
 
@@ -284,7 +284,7 @@ SetLength(XValues,Length(Self.Result.ResistanceSamples));
 SetLength(YValues,Length(XValues));
 for I := Low(XValues) to High(XValues) do
   begin
-      XValues[I]:= Self.Result.ResistanceSamples[I].Time/SecsPerDay;
+      XValues[I]:= Self.Result.ResistanceSamples[I].Time;
       YValues[I]:= Self.Result.ResistanceSamples[I].Value;
   end;
 
@@ -315,7 +315,7 @@ SetLength(YValues,Length(XValues));
 for I := Low(XValues) to High(XValues) do
   begin
       XValues[I]:= Self.Result[AJunctionIndex].AnnealResult.
-                                ResistanceSamples[I].Time/SecsPerDay;
+                                ResistanceSamples[I].Time;
       YValues[I]:= Self.Result[AJunctionIndex].AnnealResult.
                                 ResistanceSamples[I].Value;
   end;
@@ -370,7 +370,12 @@ begin
    for I := 0 to High(Self.Result) do
    begin
 
-     Result[I].Name := Self.Result[I].Coord.Subsite;
+     Result[I].Name := 'Chip['+
+                        IntToStr(Self.Result[I].Coord.Chip_X)+
+                        ','+
+                        IntToStr(Self.Result[I].Coord.Chip_Y)+
+                        ']: '+
+                         Self.Result[I].Coord.Subsite;
      Result[I].Index := I;
      Result[I].NodeType := TNodeType.ntAnnealedJunction;
 
@@ -384,7 +389,12 @@ begin
   SetLength(Result,Length(Self.Result));
    for I := 0 to High(Self.Result) do
    begin
-     Result[I].Name := Self.Result[I].Coord.Subsite;
+   Result[I].Name := 'Chip['+
+                        IntToStr(Self.Result[I].Coord.Chip_X)+
+                        ','+
+                        IntToStr(Self.Result[I].Coord.Chip_Y)+
+                        ']: '+
+                         Self.Result[I].Coord.Subsite;
      Result[I].Index := I;
      Result[I].NodeType := TNodeType.ntProbedJunction;
 

@@ -24,6 +24,7 @@ type
     function BatchProbeAllowed:Boolean;
     function SingleAnnealAllowed:Boolean;
     function BatchAnnealAllowed:Boolean;
+    procedure DisableAll;
   end;
 
 
@@ -122,7 +123,8 @@ type
     hcAnnealBatch,
     hcProbeBatchCycle,
     hcProbeBatch,
-    hcShutdown
+    hcShutdown,
+    hcSetTemperature
   );
 
   THardwareCommand = record
@@ -131,6 +133,7 @@ type
     AnnealParameters: TAnnealConfig;
     ProbingParameters: TProbingParameters;
     AnnealConfigArray: TAnnealConfigArray;
+    Temperature: Double;
   end;
 
   THardwareResult = record
@@ -225,6 +228,13 @@ begin
      Result := SetupStatus[itAnalyzer].OK
                 and  SetupStatus[itProber].OK
                 and  SetupStatus[itHeater].OK;
+end;
+
+procedure TSetupStatusManager.DisableAll;
+begin
+    SetupStatus[itAnalyzer].OK := False;
+    SetupStatus[itProber].OK  := False;
+    SetupStatus[itHeater].OK := False;
 end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);

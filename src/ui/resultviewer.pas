@@ -4,7 +4,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls, AnnealTypes,
-  Mitov.VCLTypes, VCL.LPControl, SLControlCollection, LPControlDrawLayers,
+  Mitov.VCLTypes,
   Chart4D.Types,Chart4D.Style,Chart4D.VCL, Chart4D.Series;
 
 type
@@ -36,9 +36,7 @@ implementation
 
 { TResultViewerForm }
 procedure TResultViewerForm.FormCreate(Sender: TObject);
-{
-var
-  LineSeries: TLineSeries;}
+  var Style : TChartStyle;
 begin
   Chart := TChart4D.Create(Self);
   Chart.Parent := Self;
@@ -47,6 +45,13 @@ begin
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
+
+   {$IFDEF RELEASE}
+  Style:= Chart.Plot.Style;
+  Style.ScaleFactor := 0.7;
+  Style.GridColor := $FF404040;
+  Chart.Plot.Style := Style;
+    {$ENDIF}
   Chart.Plot.Title := 'Resistance';
   //Chart.Plot.Subtitle := 'Share of the population using the internet, 2020';
   //Chart.Plot.Source := 'Source: World Bank';

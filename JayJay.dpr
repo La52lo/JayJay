@@ -24,7 +24,9 @@ uses
   taskselectdialogunit in 'src\ui\taskselectdialogunit.pas' {TaskSelectDialog},
   logview in 'src\ui\logview.pas' {LogViewForm},
   nodejunctionmapper in 'src\core\nodejunctionmapper.pas',
-  resultviewer in 'src\ui\resultviewer.pas' {ResultViewerForm};
+  resultviewer in 'src\ui\resultviewer.pas' {ResultViewerForm},
+  Vcl.Themes,
+  Vcl.Styles;
 
 {$R *.res}
 
@@ -32,6 +34,7 @@ begin
 
   Application.MainFormOnTaskbar:=False;
   Application.Initialize;
+  TStyleManager.TrySetStyle('Iceberg Classico');
   Application.Title := 'JayJay';
   Application.CreateForm(TMainWindowForm, MainWindowForm);
   Application.CreateForm(TAnnealConfigForm, AnnealConfigForm);

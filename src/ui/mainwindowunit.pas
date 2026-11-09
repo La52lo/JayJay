@@ -24,7 +24,6 @@ type
     IconList: TImageList;
     MainMenu: TMainMenu;
     FileMenuItem: TMenuItem;
-    EditMenuItem: TMenuItem;
     AnnealMenuItem: TMenuItem;
     OpenDeviceMenuItem: TMenuItem;
     AddTaskButton: TToolButton;
@@ -45,6 +44,7 @@ type
     AbortButton: TToolButton;
     ImageCollection1: TImageCollection;
     VirtualImageList1: TVirtualImageList;
+    ImageList1: TImageList;
 
     procedure AnnealMenuItemClick(Sender: TObject);
     procedure ConnectButtonClick(Sender: TObject);
@@ -84,7 +84,6 @@ type
     FJunctionNodeList: TObjectList<TJunctionNodeData>;
     Chart        : TChart4D;
     function GetImageIndexForNodeType(ANodeType: TNodeType): Integer;
-    function GetDisplayNameForNodeType(ANodeType: TNodeType): string;
     function AddNode(AParent: TTreeNode; const ANodeType: TNodeType;
                      const AText: string): TTreeNode;
     procedure OnThreadTerminate(Sender: TObject);
@@ -174,6 +173,7 @@ begin
 end;
 
 procedure TMainWindowForm.FormCreate(Sender: TObject);
+ var Style : TChartStyle;
 begin
 
   FJunctionNodeList := TObjectList<TJunctionNodeData>.Create(True);
@@ -192,17 +192,28 @@ begin
   Chart.Parent := Self;
   Chart.Align := alClient;
 
+   {$IFDEF RELEASE}
+  Style:= Chart.Plot.Style;
+  Style.ScaleFactor := 0.7;
+  Style.GridColor := $FF404040;
+  Chart.Plot.Style := Style;
+  DeviceTreeView.Images := ImageList1;
+  {$ELSE}
+
+  {$ENDIF}
+
+
 
   Chart.Plot.Kind := TChartKind.Scatter;
   Chart.Plot.Orientation := TChartOrientation.Vertical;
   Chart.Plot.Title := 'Live Graph';
   Chart.Plot.Subtitle := 'Parameter Analyzer';
+
   //Chart.Plot.Source := 'Source: World Bank';
   //Chart.Plot.Categories := ['1', '2'];
   //Chart.Plot.AddSeries('2020', [0,100]);
   Chart.Plot.AddLineSeries('series',[1,2],[70,90]);
-
-
+  // Check your specific version properties for numeric suffix or format patterns
   { Create default device }
   FSetupStatus.SetupStatus[itAnalyzer].Label_ := 'Device';
   FSetupStatus.SetupStatus[itHeater].Label_ := 'Device';
@@ -218,6 +229,7 @@ begin
 end;
 
 procedure TMainWindowForm.DispatchTask(TaskPointer:Pointer);
+var FinalTemperature:Double;
 begin
 
    FCurrentThread.ResetAbort;
@@ -230,24 +242,40 @@ begin
          begin
          TProbeTask(TaskPointer).Result := Default(TProbingResult);
          FCurrentThread.Probe((TProbeTask(TaskPointer)).Config);
+         Chart.Plot.Subtitle := 'Resistance by voltage [V]';
          end;
        TNodeType.ntAnneal:
          begin
          TAnnealTask(TaskPointer).Result := Default(TAnnealResult);
          FCurrentThread.Anneal((TAnnealTask(TaskPointer)).Config);
+         Chart.Plot.Subtitle := 'Resistance over time [s]';
 
          end;
        TNodeType.ntBatchAnneal:
          begin
+          if MessageDlg(
+          'Return stage to room temperature after annealing?',
+          TMsgDlgType.mtConfirmation,
+          [TMsgDlgBtn.mbYes, TMsgDlgBtn.mbNo],
+          0
+          ) = mrYes then
+            begin
+              FinalTemperature := 22;
+            end
+        else
+            begin
+              FinalTemperature := 0;
+            end;
          TBatchAnnealTask(TaskPointer).Result := Default(TAnnealResultArray);
-         FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Config);
-
+         FCurrentThread.AnnealBatch((TBatchAnnealTask(TaskPointer)).Config,
+                                          FinalTemperature);
+         Chart.Plot.Subtitle := 'Resistance over time [s]';
          end;
        TNodeType.ntBatchProbe:
          begin
          TBatchProbeTask(TaskPointer).Result := Default(TProbingResultArray);
          FCurrentThread.ProbeBatch((TBatchProbeTask(TaskPointer)).Config);
-
+         Chart.Plot.Subtitle := 'Resistance by voltage [V]';
          end;
    end;
 end;
@@ -270,10 +298,6 @@ begin
   Result := NODETYPE_MAP[ANodeType].ImageIndex;
 end;
 
-function TMainWindowForm.GetDisplayNameForNodeType(ANodeType: TNodeType): string;
-begin
-  Result := NODETYPE_MAP[ANodeType].DisplayName;
-end;
 
 function TMainWindowForm.IsMetadataNode(ANode: TTreeNode): Boolean;
 begin
@@ -284,7 +308,7 @@ end;
 
 procedure TMainWindowForm.AddMetadataNodes(ANode: TTreeNode; ACreatedAt, AModifiedAt: TDateTime);
 var
-  CreatedNode, ModifiedNode: TTreeNode;
+  ModifiedNode: TTreeNode;
   DisplayTime: String;
 begin
   if ANode = nil then Exit;
@@ -347,8 +371,6 @@ end;
 
 
 procedure TMainWindowForm.NewDeviceMenuItemClick(Sender: TObject);
-var
-  DeviceName: string;
 begin
   if FOperationManager.IsTaskRunning then
   begin
@@ -420,7 +442,6 @@ procedure TMainWindowForm.AddTaskButtonClick(Sender: TObject);
 var
   TaskType: TNodeType;
   TaskName: string;
-  NewTaskNode: TTreeNode;
   NewHardwareTask: THardwareTask;
 begin
   if TaskSelectDialog.ShowTaskSelectDialog(TaskType) then
@@ -451,7 +472,6 @@ begin
     //AddMetadataNodes(NewTaskNode, NewHardwareTask.CreatedAt, NewHardwareTask.ExecutedAt);
     
     FDeviceManager.AddTask(NewHardwareTask,TaskName, TaskType);
-    FSelectedTaskNode := NewTaskNode;
     RefreshTreeView;
   end;
 end;
@@ -616,7 +636,7 @@ begin
             if ErrorMsg = '' then
             Begin
             ShowMessage('Configuration saved.');
-            ProbeTask.Config := ProbingParameters;
+            BatchProbeTask.Config := ProbingParameters;
             End Else ShowMessage(ErrorMsg);
           end;
         end;
@@ -650,6 +670,8 @@ begin
   begin
     StopHWThread;
     ConnectButton.ImageIndex := 6;
+    FSetupStatus.DisableAll;
+    EquipmentStatusBar.Repaint;
     exit;
   end;
 
@@ -1003,9 +1025,12 @@ procedure TMainWindowForm.TaskFinished(
       FOperationManager.IsTaskRunning:=False;
       FOperationManager.ActiveTask := nil;
     end;
-   RefreshTreeView;
-   Chart.Plot.ClearSeries;
+    if  (Result.CommandType = THardwareCommandType.hcAnnealSingle)
+        or  (Result.CommandType = THardwareCommandType.hcAnnealBatch)
+        or   (Result.CommandType = THardwareCommandType.hcProbeBatch)
+        then   ShowMessage('Operation Complete');
 
+   RefreshTreeView;
  end;
 
 

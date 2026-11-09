@@ -108,8 +108,8 @@ type
   { Setting integration time (Valid until *RST or change selection via AAD }
   { ------------------------------------------------------------------ }
   TADCType = (
-    adcHighSpeed = 1,
-    adcHighResolution =2
+    adcHighSpeed = 0,
+    adcHighResolution = 1
   );
 
   TAITMode = (
