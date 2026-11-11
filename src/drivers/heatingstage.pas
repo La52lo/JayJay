@@ -97,7 +97,7 @@ begin
   RequireConnection;
   FInstrument.Write(Format('TEMP%03d', [Round(TempC)]));
   FInstrument.Write('STE');
-  WriteLn(Format('Heating stage target set to %.1f C', [TempC]));
+  //WriteLn(Format('Heating stage target set to %.1f C', [TempC]));
 end;
 
 function THeatingStage.GetTemperature: Double;

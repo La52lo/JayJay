@@ -333,7 +333,7 @@ end;
 
 function TMessageBuilder.MY_RI(AChannel: TChannelNr) : TMessageBuilder;
 begin
-  AppendCmd(SysUtils.Format('RI %d,%d',[Ord(AChannel),RANGE_LIMIT_100uA]));
+  AppendCmd(SysUtils.Format('RI %d,%d',[Ord(AChannel),RANGE_LIMIT_100nA_AUTOUP]));
   Result := Self;
 end;
 

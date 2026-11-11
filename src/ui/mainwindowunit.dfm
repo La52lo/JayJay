@@ -12,6 +12,7 @@ object MainWindowForm: TMainWindowForm
   Font.Name = 'Segoe UI'
   Font.Style = []
   Menu = MainMenu
+  Position = poDesktopCenter
   OnCloseQuery = FormCloseQuery
   OnCreate = FormCreate
   OnDestroy = FormDestroy

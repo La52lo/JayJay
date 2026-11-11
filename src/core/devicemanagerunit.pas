@@ -182,7 +182,7 @@ begin
       PulseLength:= 2.0;
       PulsePairs:= 2;
       Cycles:= 300;
-      MeasureVoltage:= 0.1;
+      MeasureVoltage:= 0.01;
       MeasureTime:= 0.5;
       ThresholdShort:= 500.0;
       ThresholdOpen := 20000.0;
@@ -206,7 +206,7 @@ begin
       PulseLength:= 2.0;
       PulsePairs:= 2;
       Cycles:= 300;
-      MeasureVoltage:= 0.1;
+      MeasureVoltage:= 0.01;
       MeasureTime:= 0.5;
       ThresholdShort:= 500.0;
       ThresholdOpen := 20000.0;
@@ -220,7 +220,7 @@ begin
   FDisplayName := 'Single Resistance';
   with FConfig do
     begin
-      VoltageList        := [0.1,0.05,-0.05,-0.1];
+      VoltageList        := [0.01,0.005,-0.005,-0.01];
       MeasureTime        := 0.5;
       InitialWait        := 1.0;    { s,  default 1.0    }
     end;
@@ -232,7 +232,7 @@ begin
   FDisplayName := 'Batch Resistance';
   with FConfig do
     begin
-      VoltageList        := [0.1,0.05,-0.05,-0.1];
+      VoltageList        := [0.01,0.005,-0.005,-0.01];
       MeasureTime        := 0.5;
       InitialWait        := 1.0;    { s,  default 1.0    }
     end;

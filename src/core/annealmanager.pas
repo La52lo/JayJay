@@ -331,7 +331,7 @@ begin
     begin
       if (I = Low(AVoltages)) and (High(AVoltages) <> 0)
          then  CycleWait := AInitialWait  //let it sit before first measuremnt
-         else CycleWait := 0.3;
+         else CycleWait := 0.6;
 
       Result[I]:= MeasureResistance(AVoltages[I],CycleWait,AMeasureTime);
       FObserver.MeasurementPoint(AVoltages[I], Result[I]);
