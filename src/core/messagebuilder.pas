@@ -49,7 +49,7 @@ type
     function XE: TMessageBuilder;
 
     { Staircase sweep commands, per Keysight B1500 Programming Guide }
-    function WM(AAbort, APost: Integer = 1): TMessageBuilder;
+    function WM(AAbort: Integer; APost: Integer = 1): TMessageBuilder;
     function WT(AHold, ADelay: Double; AStepDelay: Double = 0;
       ASourceTriggerDelay: Double = 0; AMeasurementTriggerDelay: Double = 0): TMessageBuilder;
     function WV(AChannel: TChannelNr; AMode: Integer; ARange: TVOutputRange;
