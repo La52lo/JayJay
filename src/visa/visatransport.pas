@@ -31,39 +31,28 @@ interface
 uses
    Winapi.Windows, System.SysUtils;
 
-{ ------------------------------------------------------------------ }
-{ VISA type aliases                                                    }
-{ ------------------------------------------------------------------ }
 type
   ViStatus   = LongInt;
   ViSession  = LongWord;
   ViUInt32   = LongWord;
-  ViBoolean  = UInt16;        { VI_TRUE=1, VI_FALSE=0 }
+  ViBoolean  = UInt16;
   ViPSession = ^ViSession;
   ViPUInt32  = ^ViUInt32;
 
 const
-  { Status codes }
   VI_SUCCESS        = 0;
   VI_NULL           = 0;
-
-  { Access modes }
   VI_NO_LOCK        = 0;
-
-  { Attribute constants }
-  VI_ATTR_TMO_VALUE      = $3FFF001A;  { timeout in ms             }
-  VI_ATTR_TERMCHAR       = $3FFF0018;  { termination character      }
-  VI_ATTR_TERMCHAR_EN    = $3FFF0038;  { enable termchar detection  }
-  VI_ATTR_SEND_END_EN    = $3FFF0036;  { assert EOI on last byte    }
+  VI_ATTR_TMO_VALUE      = $3FFF001A;
+  VI_ATTR_TERMCHAR       = $3FFF0018;
+  VI_ATTR_TERMCHAR_EN    = $3FFF0038;
+  VI_ATTR_SEND_END_EN    = $3FFF0036;
 
   VI_TRUE  : ViBoolean = 1;
   VI_FALSE : ViBoolean = 0;
 
-{ ------------------------------------------------------------------ }
-{ NI-VISA DLL imports                                                  }
-{ ------------------------------------------------------------------ }
 {$IF Defined(MSWINDOWS)}
- const VISALIB = 'visa32.dll';
+const VISALIB = 'visa32.dll';
 {$ENDIF}
 
 function viOpenDefaultRM(out sesn: ViSession): ViStatus;
@@ -79,7 +68,6 @@ function viClose(vi: ViSession): ViStatus;
 function viClear(vi: ViSession): ViStatus;
   stdcall; external VISALIB name 'viClear';
 
-{ Changed 'buf' to Pointer to safely handle both text strings and binary byte arrays }
 function viWrite(vi: ViSession; buf: Pointer; count: ViUInt32;
   out retCount: ViUInt32): ViStatus;
   stdcall; external VISALIB name 'viWrite';
@@ -100,9 +88,6 @@ function viStatusDesc(vi: ViSession; status: ViStatus;
   desc: PAnsiChar): ViStatus;
   stdcall; external VISALIB name 'viStatusDesc';
 
-{ ------------------------------------------------------------------ }
-{ High-level transport object                                          }
-{ ------------------------------------------------------------------ }
 type
   EVISAError = class(Exception);
 
@@ -113,49 +98,36 @@ type
     FAddr   : string;
     procedure CheckStatus(status: ViStatus; const context: string);
   public
-    { resourceAddress : VISA resource string, e.g. 'GPIB0::16::INSTR'
-      timeoutMs       : I/O timeout in milliseconds (default 10 s).
-                        Use 30000+ for self-calibration calls.       }
     constructor Create(const resourceAddress: string;
                        timeoutMs: LongWord = 10000);
-    destructor  Destroy; override;
+    destructor Destroy; override;
 
-    { Send a command string (no response expected).
-      A LF terminator is appended automatically.   }
     procedure Write(const cmd: string);
+    function Ask(const cmd: string): string;
 
-    { Send a query and return the trimmed response string. }
-    function  Ask(const cmd: string): string;
+    { Configure VISA input termination. Use comma for B1500 FMT 5 streaming,
+      then restore LF before ordinary VISA queries. }
+    procedure SetReadTermination(const terminator: AnsiChar;
+      enabled: Boolean = True);
 
-    { Change the I/O timeout at runtime (e.g. before *CAL?) }
+    { Read exactly ACount bytes from the current VISA session. Intended for
+      fixed-width B1500 streaming records when termchar termination is set. }
+    function ReadExact(ACount: Integer): AnsiString;
+
     procedure SetTimeout(timeoutMs: LongWord);
-
     property Address: string read FAddr;
   end;
 
 implementation
 
-{ ------------------------------------------------------------------ }
-
-{procedure TVisaTransport.CheckStatus(status: ViStatus; const context: string);
-begin
-  if status < VI_SUCCESS then
-
-    raise EVISAError.CreateFmt(
-      'VISA error 0x%.8X in %s  (resource: %s)',
-      [LongWord(status), context, FAddr]);
-end;}
-
 procedure TVisaTransport.CheckStatus(status: ViStatus; const context: string);
 var
-  { Expand to 1024 bytes to completely eliminate any driver stack overflow risks }
   ErrorBuffer: AnsiString;
   ErrorMsg: string;
   LookupSession: ViSession;
 begin
   if status < VI_SUCCESS then
   begin
-    { Safely clear the expanded buffer space }
     SetLength(ErrorBuffer, 1023);
     FillChar(ErrorBuffer[1], 1023, ' ');
     if FInstr <> VI_NULL then
@@ -163,73 +135,52 @@ begin
     else
       LookupSession := FRM;
 
-    { Call viStatusDesc with the safe, padded stack buffer pointer }
     if LookupSession <> VI_NULL then
-      if (viStatusDesc(LookupSession, status, PAnsiChar(ErrorBuffer)) = VI_SUCCESS) then
-        begin
-          { Safe parsing to string up to the null-terminator boundary }
-          SetString(ErrorMsg, PAnsiChar(ErrorBuffer), StrLen(PAnsiChar(ErrorBuffer)));
-        end
-        else
-          ErrorMsg := 'Unknown or unmapped VISA error code.';
+      if viStatusDesc(LookupSession, status, PAnsiChar(ErrorBuffer)) = VI_SUCCESS then
+        SetString(ErrorMsg, PAnsiChar(ErrorBuffer), StrLen(PAnsiChar(ErrorBuffer)))
+      else
+        ErrorMsg := 'Unknown or unmapped VISA error code.';
 
     ErrorMsg := TrimRight(ErrorMsg);
-
-    { Now that the stack frames are perfectly preserved, this will fire cleanly }
     raise EVISAError.CreateFmt(
       'VISA Error [0x%.8X] in %s: %s (Resource: %s)',
-      [LongWord(status), context, ErrorMsg, FAddr]
-    );
+      [LongWord(status), context, ErrorMsg, FAddr]);
   end;
 end;
 
-
-
 constructor TVisaTransport.Create(const resourceAddress: string; timeoutMs: LongWord);
 var
-  st : ViStatus;
+  st: ViStatus;
 begin
   inherited Create;
-  FAddr   := resourceAddress;
-  FRM     := VI_NULL;
-  FInstr  := VI_NULL;
+  FAddr := resourceAddress;
+  FRM := VI_NULL;
+  FInstr := VI_NULL;
 
   try
-    { Open the default resource manager }
     st := viOpenDefaultRM(FRM);
     CheckStatus(st, 'viOpenDefaultRM');
 
-    { Open the instrument session }
     st := viOpen(FRM, PAnsiChar(AnsiString(resourceAddress)), VI_NO_LOCK, 0, FInstr);
-
     CheckStatus(st, 'viOpen("' + resourceAddress + '")');
 
-    { --- Replicate QCoDeS VisaInstrument.__init__ setup ------------- }
-
-    { 1. I/O timeout }
-    OutputDebugString('AFTER CheckStatus - Code continued sequentially!');
     st := viSetAttribute(FInstr, VI_ATTR_TMO_VALUE, timeoutMs);
     CheckStatus(st, 'viSetAttribute(VI_ATTR_TMO_VALUE)');
 
-    { 2. Termination character = LF (#10) }
     st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR, 10);
     CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR)');
 
     st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, VI_TRUE);
     CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
 
-    { 3. Device clear }
     st := viClear(FInstr);
     CheckStatus(st, 'viClear');
-
   except
-    { If anything failed above, clean up what we managed to open, then re-raise }
     if FInstr <> VI_NULL then viClose(FInstr);
-    if FRM    <> VI_NULL then viClose(FRM);
-    raise; // Re-raises the exact EVISAError exception back up to the caller
+    if FRM <> VI_NULL then viClose(FRM);
+    raise;
   end;
 end;
-
 
 destructor TVisaTransport.Destroy;
 begin
@@ -238,31 +189,75 @@ begin
     viClear(FInstr);
     viClose(FInstr);
   end;
-  if FRM    <> VI_NULL then
+  if FRM <> VI_NULL then
   begin
     viClear(FRM);
     viClose(FRM);
   end;
-
   inherited;
 end;
 
 procedure TVisaTransport.SetTimeout(timeoutMs: LongWord);
 var
-  st : ViStatus;
+  st: ViStatus;
 begin
   st := viSetAttribute(FInstr, VI_ATTR_TMO_VALUE, timeoutMs);
   CheckStatus(st, 'viSetAttribute(VI_ATTR_TMO_VALUE)');
 end;
 
+procedure TVisaTransport.SetReadTermination(const terminator: AnsiChar;
+  enabled: Boolean);
+var
+  st: ViStatus;
+  enableValue: ViUInt32;
+begin
+  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR, Ord(terminator));
+  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR)');
+
+  if enabled then
+    enableValue := VI_TRUE
+  else
+    enableValue := VI_FALSE;
+  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, enableValue);
+  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
+end;
+
+function TVisaTransport.ReadExact(ACount: Integer): AnsiString;
+var
+  st: ViStatus;
+  bytesRead: ViUInt32;
+  totalRead: Integer;
+  remaining: Integer;
+begin
+  if ACount <= 0 then
+    raise EArgumentOutOfRangeException.Create('ReadExact byte count must be positive.');
+  if FInstr = VI_NULL then
+    raise EVISAError.Create('Cannot read: VISA instrument session is not open.');
+
+  SetLength(Result, ACount);
+  totalRead := 0;
+  while totalRead < ACount do
+  begin
+    remaining := ACount - totalRead;
+    bytesRead := 0;
+    st := viRead(FInstr, @Result[totalRead + 1], remaining, bytesRead);
+    CheckStatus(st, 'viRead (fixed-length streaming record)');
+    if bytesRead = 0 then
+      raise EVISAError.CreateFmt(
+        'VISA read returned no data while reading a %d-byte record (resource: %s).',
+        [ACount, FAddr]);
+    Inc(totalRead, bytesRead);
+  end;
+end;
+
 procedure TVisaTransport.Write(const cmd: string);
 var
-  st       : ViStatus;
-  retCount : ViUInt32;
-  buf      : AnsiString;
+  st: ViStatus;
+  retCount: ViUInt32;
+  buf: AnsiString;
 begin
-  buf := AnsiString(cmd + #13#10);   { append LF terminator }
-  st  := viWrite(FInstr, PAnsiChar(buf), Length(buf), retCount);
+  buf := AnsiString(cmd + #13#10);
+  st := viWrite(FInstr, PAnsiChar(buf), Length(buf), retCount);
   CheckStatus(st, 'viWrite("' + cmd + '")');
 end;
 
@@ -270,29 +265,18 @@ function TVisaTransport.Ask(const cmd: string): string;
 const
   BUFSIZE = 1024;
 var
-  st       : ViStatus;
-  retCount : ViUInt32;
-  ReadBuffer : AnsiString; // Changed from Char to AnsiChar
+  st: ViStatus;
+  retCount: ViUInt32;
+  ReadBuffer: AnsiString;
 begin
   Write(cmd);
   SetLength(ReadBuffer, BUFSIZE);
   FillChar(PAnsiChar(ReadBuffer)^, BUFSIZE, 0);
-  retCount:=0;
-  //FillChar(buf, SizeOf(buf), 0);
-
-  // This is now perfectly safe because 'Pointer' accepts any address pointer type (@)
-  st := viRead(FInstr,PAnsiChar(ReadBuffer), BUFSIZE, retCount);
-  {OutputDebugString(PChar(Format(
-  'viRead: status=$%.8x, retCount=%d',
-  [Cardinal(st), retCount]
-    )));}
+  retCount := 0;
+  st := viRead(FInstr, PAnsiChar(ReadBuffer), BUFSIZE, retCount);
   CheckStatus(st, 'viRead (after "' + cmd + '")');
-  if st >= 0 then
-  begin
-    // To convert this buffer safely into a normal Delphi string for a memo or label:
-     SetString(Result, PAnsiChar(ReadBuffer), retCount);
-     Result := TrimRight(Result);
-  end;
+  SetString(Result, PAnsiChar(ReadBuffer), retCount);
+  Result := TrimRight(Result);
 end;
 
 end.
