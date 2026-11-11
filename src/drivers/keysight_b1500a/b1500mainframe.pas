@@ -43,6 +43,13 @@ type
     function ExecuteSynchronousMeasurement: TFMTResponseArray;
     function ExecuteMeasurementRaw: string;
 
+    { Start a staircase voltage sweep on SMU1 and stream each current result
+      as a (voltage, resistance) pair to AOnSample. Returns samples relayed.
+      AVoltages must describe the linear staircase configured by WV. }
+    function ExecuteStaircaseStream(const AVoltages: TArray<Double>;
+      AInitialWait, AMeasureTime: Double;
+      const AOnSample: TProc<Double, Double>): Integer;
+
     { Execute a staircase voltage sweep on SMU1, measuring its current,
       and return Abs(V/I) for each sweep point. A zero/near-zero current
       produces the established 1e12 Ohm open-circuit sentinel. }
@@ -234,6 +241,123 @@ end;
 function TB1500.ExecuteMeasurementRaw: string;
 begin
   Result := Ask('XE');
+end;
+
+function TB1500.ExecuteStaircaseStream(const AVoltages: TArray<Double>;
+  AInitialWait, AMeasureTime: Double;
+  const AOnSample: TProc<Double, Double>): Integer;
+const
+  { FMT 5 is 3 header bytes + 12 ASCII measurement bytes + comma. }
+  FMT5_RECORD_BYTES = 16;
+  MIN_CURRENT = 1e-14;
+var
+  MB: TMessageBuilder;
+  I, PLC: Integer;
+  RawRecord: AnsiString;
+  Header, ValueText: string;
+  Current, Voltage, Resistance: Double;
+  Settings: TFormatSettings;
+  FmtRestored, TerminatorRestored: Boolean;
+begin
+  Result := 0;
+  if Length(AVoltages) = 0 then
+    Exit;
+  if not Assigned(FSMU1) then
+    raise EB1500Error.Create('ExecuteStaircaseStream requires SMU1.');
+  if not Assigned(AOnSample) then
+    raise EArgumentNilException.Create('AOnSample callback must be assigned.');
+  if AMeasureTime < 0 then
+    raise EArgumentOutOfRangeException.Create('Measurement time cannot be negative.');
+
+  { WV specifies a linear sweep. Require the supplied point list to match
+    that sweep so the callback voltage stays aligned with each current. }
+  if Length(AVoltages) > 2 then
+    for I := 1 to High(AVoltages) - 1 do
+      if Abs((AVoltages[I] - AVoltages[I - 1]) -
+        (AVoltages[1] - AVoltages[0])) >
+        1e-9 * Max(1.0, Abs(AVoltages[I])) then
+        raise EArgumentException.Create(
+          'Staircase sweep voltages must be evenly spaced.');
+
+  PLC := Round(AMeasureTime / 0.02);
+  if PLC < 1 then
+    PLC := 1;
+  Settings := TFormatSettings.Invariant;
+  FmtRestored := False;
+  TerminatorRestored := False;
+  MB := TMessageBuilder.Create;
+  try
+    try
+      { Configure measurement time and staircase current measurement. }
+      SetIntegrationTimePLC(PLC);
+      Write(MB.CMM(FSMU1.Channel, 1)
+        .MM(2, [FSMU1.Channel])
+        .WM(2, 1)
+        .WT(AInitialWait, 0)
+        .WV(FSMU1.Channel, 1, vorAuto, AVoltages[0],
+          AVoltages[High(AVoltages)], Length(AVoltages), 0.1)
+        .Message);
+
+      { Set FMT while LF termination is still active; Write performs ERRX?. }
+      Write(MB.FmtCommaTerminated.Message);
+      FTransport.SetReadTermination(',', True);
+
+      { Do not call Write here: its ERRX? query would consume/interleave with
+        the measurement stream. XE output is read directly below. }
+      RawWrite(MB.XE.Message);
+
+      for I := 0 to High(AVoltages) do
+      begin
+        RawRecord := FTransport.ReadExact(FMT5_RECORD_BYTES);
+        if (Length(RawRecord) <> FMT5_RECORD_BYTES) or
+           (RawRecord[FMT5_RECORD_BYTES] <> ',') then
+          raise EConvertError.CreateFmt(
+            'Malformed FMT 5 sweep record at point %d: "%s"',
+            [I + 1, string(RawRecord)]);
+
+        Header := Copy(string(RawRecord), 1, 3);
+        ValueText := Trim(Copy(string(RawRecord), 4, 12));
+        if (Header[1] <> 'N') and (Header[1] <> 'C') and
+           (Header[1] <> 'T') and (Header[1] <> 'V') and
+           (Header[1] <> 'O') and (Header[1] <> 'F') and
+           (Header[1] <> 'G') and (Header[1] <> 'X') then
+          raise EConvertError.CreateFmt(
+            'Unexpected FMT 5 status header at point %d: "%s"',
+            [I + 1, Header]);
+        if Header[3] <> 'I' then
+          raise EConvertError.CreateFmt(
+            'Expected current measurement in FMT 5 record at point %d, got "%s".',
+            [I + 1, Header]);
+        if not TryStrToFloat(ValueText, Current, Settings) then
+          raise EConvertError.CreateFmt(
+            'Cannot parse FMT 5 current value at point %d: "%s"',
+            [I + 1, ValueText]);
+
+        Voltage := AVoltages[I];
+        if Abs(Current) > MIN_CURRENT then
+          Resistance := Abs(Voltage / Current)
+        else
+          Resistance := 1e12;
+        AOnSample(Voltage, Resistance);
+        Inc(Result);
+      end;
+    finally
+      { Restore LF before issuing the checked FMT command (whose ERRX? reply
+        is line-terminated), even if parsing or the callback raised. }
+      try
+        FTransport.SetReadTermination(#10, True);
+        TerminatorRestored := True;
+      finally
+        if TerminatorRestored then
+        begin
+          Write('FMT 1,0');
+          FmtRestored := True;
+        end;
+      end;
+    end;
+  finally
+    MB.Free;
+  end;
 end;
 
 procedure TB1500.SelfCalibration;
