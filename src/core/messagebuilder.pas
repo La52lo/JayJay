@@ -4,26 +4,7 @@
   message_builder.pas
   -------------------
   Assembles Keysight B1500A FLEX command strings.
-
-  Each method appends one FLEX command to an internal buffer.
-  Call .Message to retrieve the complete string (buffer is reset).
-  Send the result via TVisaTransport.Write or .Ask.
-
-  Method naming mirrors the QCoDeS MessageBuilder class.
-
-  Reference: Keysight B1500A Programming Guide, Chapter 4 (FLEX Commands)
-
-  Fixed vs ori ginal
-  -----------------
-  * Removed duplicate Append implementation (caused "duplicate identifier"
-    compile error in FPC). The private method is now named AppendCmd to
-    avoid any ambiguity with inherited methods.
-  * FlexFloat now uses a local TFormatSettings to guarantee '.' as decimal
-    separator regardless of OS locale, replacing the fragile post-hoc
-    StringReplace approach.
 }
-
-
 
 interface
 
@@ -34,121 +15,62 @@ type
   TMessageBuilder = class
   private
     FBuf : string;
-    { Appends s to the buffer, separated by ';' if the buffer is non-empty }
     procedure AppendCmd(const s: string);
   public
     constructor Create;
-
-    { Retrieve the assembled command string and reset the buffer }
     function Message: string;
-
-    { Reset the buffer without reading }
     procedure Clear;
 
-    { -------------------------------------------------------------- }
-    { System / mainframe commands                                      }
-    { -------------------------------------------------------------- }
-
-    { *CAL? – self calibration query (blocks on instrument until done) }
+    { System / mainframe commands }
     function CalQuery: TMessageBuilder;
-
-    { *IDN? – identification query }
     function IdnQuery: TMessageBuilder;
-
-    { *RST – reset }
     function Rst: TMessageBuilder;
-
-    { FMT format, mode – set output data format
-        format 1 = ASCII 12-digit with header, CRLF+EOI
-        mode   0 = only measurement data (default)
-               1 = measurement data + source data             }
     function Fmt(format: Integer = 1; mode: Integer = 0): TMessageBuilder;
-
-    { UNT? mode – query installed modules }
     function UntQuery(mode: TUNTMode = untModuleInfoOnly): TMessageBuilder;
-
-    { ERR? – query error code }
     function ErrQuery: TMessageBuilder;
 
-    { -------------------------------------------------------------- }
-    { Channel enable / disable                                         }
-    { -------------------------------------------------------------- }
-
-    { CN chnum – enable (connect) a single channel }
+    { Channel enable / disable }
     function CN(chnum: TChannelNr): TMessageBuilder; overload;
-    { CN chnums – enable multiple channels in one command }
     function CN(const chnums: array of TChannelNr): TMessageBuilder; overload;
-
-    { CL chnum – disable (disconnect) a single channel }
     function CL(chnum: TChannelNr): TMessageBuilder; overload;
-    { CL chnums – disable multiple channels in one command }
     function CL(const chnums: array of TChannelNr): TMessageBuilder; overload;
 
-    { -------------------------------------------------------------- }
-    { Voltage forcing (SMU)                                            }
-    { -------------------------------------------------------------- }
+    { Voltage forcing }
+    function DV(chnum: TChannelNr; vrange: TVOutputRange;
+      voltage: Double; icomp: Double = 0.1): TMessageBuilder;
 
-    { DV chnum, vrange, voltage, icomp
-        Force a DC voltage on channel chnum.
-        vrange  : TVOutputRange (0 = auto)
-        voltage : value in Volts
-        icomp   : current compliance in Amperes (default 0.1 A)  }
-    function DV(chnum   : TChannelNr;
-                vrange  : TVOutputRange;
-                voltage : Double;
-                icomp   : Double = 0.1): TMessageBuilder;
-
-    { -------------------------------------------------------------- }
-    { Spot measurement commands                                        }
-    { -------------------------------------------------------------- }
-
-    { TV chnum, vrange – spot voltage measurement }
-    function TV(chnum : TChannelNr;
-                vrange: TVMeasRange = vmrAuto): TMessageBuilder;
-
-    { TI chnum, irange – spot current measurement }
-    function TI(chnum : TChannelNr;
-                irange: TIMeasRange = imrAuto): TMessageBuilder;
-
-    /// <summary>
-    /// Configures Measurement Mode: MM <mode>, <ch1> [, <ch2>]
-    /// Mode 1 = Spot Measurement
-    /// </summary>
+    { Spot measurement commands }
+    function TV(chnum: TChannelNr; vrange: TVMeasRange = vmrAuto): TMessageBuilder;
+    function TI(chnum: TChannelNr; irange: TIMeasRange = imrAuto): TMessageBuilder;
     function MM(AMode: Integer; const AChannels: array of TChannelNr): TMessageBuilder;
     function CMM(AChannel: TChannelNr; AMode: Integer): TMessageBuilder;
-    /// <summary>
-    /// Executes measurement: XE
-    /// </summary>
     function XE: TMessageBuilder;
-    function MY_AIT(AChannel: TChannelNr) : TMessageBuilder;
-    function MY_RI(AChannel: TChannelNr) : TMessageBuilder;
-    function MY_RM(AChannel: TChannelNr) : TMessageBuilder;
-    function MY_FL(AChannel: TChannelNr) : TMessageBuilder;
-    function MY_AAD(AChannel: TChannelNr) : TMessageBuilder;
-    function DZ : TMessageBuilder;
-    function RZ : TMessageBuilder;
 
+    { Staircase sweep commands, per Keysight B1500 Programming Guide }
+    function WM(AAbort, APost: Integer = 1): TMessageBuilder;
+    function WT(AHold, ADelay: Double; AStepDelay: Double = 0;
+      ASourceTriggerDelay: Double = 0; AMeasurementTriggerDelay: Double = 0): TMessageBuilder;
+    function WV(AChannel: TChannelNr; AMode: Integer; ARange: TVOutputRange;
+      AStart, AStop: Double; ASteps: Integer; ACurrentCompliance: Double = 0.1;
+      APowerCompliance: Double = 0): TMessageBuilder;
 
+    function MY_AIT(AChannel: TChannelNr): TMessageBuilder;
+    function MY_RI(AChannel: TChannelNr): TMessageBuilder;
+    function MY_RM(AChannel: TChannelNr): TMessageBuilder;
+    function MY_FL(AChannel: TChannelNr): TMessageBuilder;
+    function MY_AAD(AChannel: TChannelNr): TMessageBuilder;
+    function DZ: TMessageBuilder;
+    function RZ: TMessageBuilder;
   end;
 
-{ Format a Double for FLEX commands.
-  Always uses '.' decimal separator, 6 significant figures, E notation. }
 function FlexFloat(v: Double): string;
 
 implementation
-
-{ ------------------------------------------------------------------ }
-{ FlexFloat                                                            }
-{ ------------------------------------------------------------------ }
 
 function FlexFloat(v: Double): string;
 begin
   Result := Format('%.6E', [v], TFormatSettings.Invariant);
 end;
-
-{ ------------------------------------------------------------------ }
-{ TMessageBuilder                                                      }
-{ ------------------------------------------------------------------ }
 
 constructor TMessageBuilder.Create;
 begin
@@ -167,17 +89,13 @@ end;
 function TMessageBuilder.Message: string;
 begin
   Result := FBuf;
-  FBuf   := '';
+  FBuf := '';
 end;
 
 procedure TMessageBuilder.Clear;
 begin
   FBuf := '';
 end;
-
-{ ------------------------------------------------------------------ }
-{ System commands                                                      }
-{ ------------------------------------------------------------------ }
 
 function TMessageBuilder.CalQuery: TMessageBuilder;
 begin
@@ -215,10 +133,6 @@ begin
   Result := Self;
 end;
 
-{ ------------------------------------------------------------------ }
-{ Channel enable / disable                                             }
-{ ------------------------------------------------------------------ }
-
 function TMessageBuilder.CN(chnum: TChannelNr): TMessageBuilder;
 begin
   AppendCmd(SysUtils.Format('CN %d', [Ord(chnum)]));
@@ -227,16 +141,16 @@ end;
 
 function TMessageBuilder.CN(const chnums: array of TChannelNr): TMessageBuilder;
 var
-  i : Integer;
-  s : string;
+  I: Integer;
+  S: string;
 begin
-  s := 'CN';
-  for i := 0 to High(chnums) do
-  begin
-    if i = 0 then s := s + ' ' + IntToStr(Ord(chnums[i]))
-    else           s := s + ',' + IntToStr(Ord(chnums[i]));
-  end;
-  AppendCmd(s);
+  S := 'CN';
+  for I := Low(chnums) to High(chnums) do
+    if I = Low(chnums) then
+      S := S + ' ' + IntToStr(Ord(chnums[I]))
+    else
+      S := S + ',' + IntToStr(Ord(chnums[I]));
+  AppendCmd(S);
   Result := Self;
 end;
 
@@ -248,34 +162,26 @@ end;
 
 function TMessageBuilder.CL(const chnums: array of TChannelNr): TMessageBuilder;
 var
-  i : Integer;
-  s : string;
+  I: Integer;
+  S: string;
 begin
-  s := 'CL';
-  for i := 0 to High(chnums) do
-  begin
-    if i = 0 then s := s + ' ' + IntToStr(Ord(chnums[i]))
-    else           s := s + ',' + IntToStr(Ord(chnums[i]));
-  end;
-  AppendCmd(s);
+  S := 'CL';
+  for I := Low(chnums) to High(chnums) do
+    if I = Low(chnums) then
+      S := S + ' ' + IntToStr(Ord(chnums[I]))
+    else
+      S := S + ',' + IntToStr(Ord(chnums[I]));
+  AppendCmd(S);
   Result := Self;
 end;
 
-{ ------------------------------------------------------------------ }
-{ Voltage forcing                                                      }
-{ ------------------------------------------------------------------ }
-
 function TMessageBuilder.DV(chnum: TChannelNr; vrange: TVOutputRange;
-  voltage: Double; icomp: Double): TMessageBuilder;
+  voltage, icomp: Double): TMessageBuilder;
 begin
   AppendCmd(SysUtils.Format('DV %d,%d,%s,%s',
     [Ord(chnum), Ord(vrange), FlexFloat(voltage), FlexFloat(icomp)]));
   Result := Self;
 end;
-
-{ ------------------------------------------------------------------ }
-{ Spot measurement                                                     }
-{ ------------------------------------------------------------------ }
 
 function TMessageBuilder.TV(chnum: TChannelNr; vrange: TVMeasRange): TMessageBuilder;
 begin
@@ -296,21 +202,18 @@ var
 begin
   ChStr := '';
   for I := Low(AChannels) to High(AChannels) do
-  begin
     if I = Low(AChannels) then
       ChStr := IntToStr(Ord(AChannels[I]))
     else
       ChStr := ChStr + ',' + IntToStr(Ord(AChannels[I]));
-  end;
-
   AppendCmd(SysUtils.Format('MM %d,%s', [AMode, ChStr]));
   Result := Self;
 end;
 
 function TMessageBuilder.CMM(AChannel: TChannelNr; AMode: Integer): TMessageBuilder;
 begin
-    AppendCmd(SysUtils.Format('CMM %d,%d', [Ord(AChannel), AMode]));
-    Result:=Self;
+  AppendCmd(SysUtils.Format('CMM %d,%d', [Ord(AChannel), AMode]));
+  Result := Self;
 end;
 
 function TMessageBuilder.XE: TMessageBuilder;
@@ -319,46 +222,76 @@ begin
   Result := Self;
 end;
 
-function TMessageBuilder.MY_AIT(AChannel: TChannelNr) : TMessageBuilder;
+function TMessageBuilder.WM(AAbort, APost: Integer): TMessageBuilder;
 begin
-  AppendCmd(SysUtils.Format('AIT %d,%d,8', [Ord(AChannel),Ord(TAITMode.adcPLC)]));
+  AppendCmd(SysUtils.Format('WM %d,%d', [AAbort, APost]));
   Result := Self;
 end;
 
-function TMessageBuilder.MY_AAD(AChannel: TChannelNr) : TMessageBuilder;
+function TMessageBuilder.WT(AHold, ADelay, AStepDelay,
+  ASourceTriggerDelay, AMeasurementTriggerDelay: Double): TMessageBuilder;
+begin
+  AppendCmd(SysUtils.Format('WT %s,%s,%s,%s,%s',
+    [FlexFloat(AHold), FlexFloat(ADelay), FlexFloat(AStepDelay),
+     FlexFloat(ASourceTriggerDelay), FlexFloat(AMeasurementTriggerDelay)]));
+  Result := Self;
+end;
+
+function TMessageBuilder.WV(AChannel: TChannelNr; AMode: Integer;
+  ARange: TVOutputRange; AStart, AStop: Double; ASteps: Integer;
+  ACurrentCompliance, APowerCompliance: Double): TMessageBuilder;
+var
+  S: string;
+begin
+  S := SysUtils.Format('WV %d,%d,%d,%s,%s,%d,%s',
+    [Ord(AChannel), AMode, Ord(ARange), FlexFloat(AStart), FlexFloat(AStop),
+     ASteps, FlexFloat(ACurrentCompliance)]);
+  if APowerCompliance > 0 then
+    S := S + ',' + FlexFloat(APowerCompliance);
+  AppendCmd(S);
+  Result := Self;
+end;
+
+function TMessageBuilder.MY_AIT(AChannel: TChannelNr): TMessageBuilder;
+begin
+  AppendCmd(SysUtils.Format('AIT %d,%d,8', [Ord(AChannel), Ord(TAITMode.adcPLC)]));
+  Result := Self;
+end;
+
+function TMessageBuilder.MY_AAD(AChannel: TChannelNr): TMessageBuilder;
 begin
   AppendCmd(SysUtils.Format('AAD %d,1', [Ord(AChannel)]));
   Result := Self;
 end;
 
-function TMessageBuilder.MY_RI(AChannel: TChannelNr) : TMessageBuilder;
+function TMessageBuilder.MY_RI(AChannel: TChannelNr): TMessageBuilder;
 begin
-  AppendCmd(SysUtils.Format('RI %d,%d',[Ord(AChannel),RANGE_LIMIT_100nA_AUTOUP]));
+  AppendCmd(SysUtils.Format('RI %d,%d', [Ord(AChannel), RANGE_LIMIT_100nA_AUTOUP]));
   Result := Self;
 end;
 
-function TMessageBuilder.MY_RM(AChannel: TChannelNr) : TMessageBuilder;
+function TMessageBuilder.MY_RM(AChannel: TChannelNr): TMessageBuilder;
 begin
-  AppendCmd(SysUtils.Format('RM %d,%d,%d',[Ord(AChannel),AUTORANGE_MODE_UP,
-          AUTORANGE_THRESHOLD_50_PERCENT]));
-           Result := Self;
-end;
-
-function TMessageBuilder.MY_FL(AChannel: TChannelNr) : TMessageBuilder;
-begin
- AppendCmd(SysUtils.Format('FL %d,%d',[Ord(TFilterActive.filterON),Ord(AChannel)]));
+  AppendCmd(SysUtils.Format('RM %d,%d,%d', [Ord(AChannel), AUTORANGE_MODE_UP,
+    AUTORANGE_THRESHOLD_50_PERCENT]));
   Result := Self;
 end;
 
-function TMessageBuilder.DZ : TMessageBuilder;
+function TMessageBuilder.MY_FL(AChannel: TChannelNr): TMessageBuilder;
 begin
- AppendCmd('DZ');
+  AppendCmd(SysUtils.Format('FL %d,%d', [Ord(TFilterActive.filterON), Ord(AChannel)]));
   Result := Self;
 end;
 
-function TMessageBuilder.RZ : TMessageBuilder;
+function TMessageBuilder.DZ: TMessageBuilder;
 begin
- AppendCmd('RZ');
+  AppendCmd('DZ');
+  Result := Self;
+end;
+
+function TMessageBuilder.RZ: TMessageBuilder;
+begin
+  AppendCmd('RZ');
   Result := Self;
 end;
 

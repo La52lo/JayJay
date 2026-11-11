@@ -1,27 +1,8 @@
 unit b1511b;
 
 {
-  b1511b.pas
-  ----------
   Driver for the Keysight B1511B Medium Power SMU module.
-
-  Mirrors:
-    QCoDeS keysightb1500/KeysightB1511B.py  (class KeysightB1511B)
-
-  Fixes vs first version
-  ----------------------
-  * TB1511B no longer holds a TVisaTransport directly. It now holds a
-    reference to a WriteCmd/AskCmd callback pair provided by the
-    mainframe (TB1500). This means all writes go through TB1500.Write,
-    which checks ERR? after every command - exactly as the QCoDeS
-    KeysightB1500.write() override does. In the original, TB1511B
-    bypassed the error-checking write entirely.
-
-  The callback approach avoids a circular-unit reference
-  (b1511b <-> b1500_mainframe) while preserving the parent-child
-  relationship that InstrumentChannel has in QCoDeS.
 }
-
 
 interface
 
@@ -29,92 +10,69 @@ uses
   SysUtils, B1500Constants, MessageBuilder, B1500Module;
 
 type
-  { Callback types - the mainframe supplies these so that TB1511B
-    always routes through the error-checking Write/Ask.           }
   TWriteProc = procedure(const cmd: string) of object;
-  TAskFunc   = function (const cmd: string): string of object;
+  TAskFunc = function(const cmd: string): string of object;
 
-  /// <summary>
-  /// Measurement readings extracted for an SMU from a spot acquisition.
-  /// </summary>
   TSMUSpotReading = record
-    Voltage : Double;
-    Current : Double;
-    Status  : TMeasurementStatusEnum;
+    Voltage: Double;
+    Current: Double;
+    Status: TMeasurementStatusEnum;
   end;
 
   TB1511B = class
   private
-    FWriteProc  : TWriteProc;
-    FAskFunc    : TAskFunc;
-    FChannel    : TChannelNr;
-    FVOutRange  : TVOutputRange;
-    FVMeasRange : TVMeasRange;
-    FIMeasRange : TIMeasRange;
-    FCompliance : Double;
-    FEnabled    : Boolean;
-
+    FWriteProc: TWriteProc;
+    FAskFunc: TAskFunc;
+    FChannel: TChannelNr;
+    FVOutRange: TVOutputRange;
+    FVMeasRange: TVMeasRange;
+    FIMeasRange: TIMeasRange;
+    FCompliance: Double;
+    FEnabled: Boolean;
     procedure SendCmd(const cmd: string);
-    function  QueryInstr(const cmd: string): string;
+    function QueryInstr(const cmd: string): string;
   public
-    { writeProc / askFunc must be the mainframe's Write / Ask methods
-      so that every command passes through the post-write ERR? check. }
-    constructor Create(writeProc : TWriteProc;
-                       askFunc   : TAskFunc;
-                       channel   : TChannelNr);
-    destructor  Destroy; override;
-
-    { enable_outputs()  -> CN chnum }
+    constructor Create(writeProc: TWriteProc; askFunc: TAskFunc;
+      channel: TChannelNr);
+    destructor Destroy; override;
     procedure EnableOutputs;
-
-    { disable_outputs() -> CL chnum }
     procedure DisableOutputs;
-
-    { source_config(output_range, compliance)
-      Stores parameters; applied on the next SetVoltage call.
-      Mirrors the lazy QCoDeS behaviour.                       }
-    procedure SourceConfig(outputRange: TVOutputRange;
-                           compliance : Double);
-
-    { voltage(v) - SET - DV command }
+    procedure SourceConfig(outputRange: TVOutputRange; compliance: Double);
     procedure SetVoltage(v: Double);
-
-    { voltage() - GET - TV command }
-    function  GetVoltage: Double;
-
-    { current() - GET - TI command }
-    function  GetCurrent: Double;
-
-    /// <summary>
-    /// Triggers synchronous execution (XE) and returns the spot measurement value.
-    /// </summary>
+    function GetVoltage: Double;
+    function GetCurrent: Double;
     function MeasureSpot: Double;
-
-    { v_measure_range_config / i_measure_range_config }
     procedure VMeasRangeConfig(vrange: TVMeasRange);
     procedure IMeasRangeConfig(irange: TIMeasRange);
     function ExtractReading(const ARawResponse: string): TSMUSpotReading;
 
-    property Channel   : TChannelNr read FChannel;
-    property IsEnabled : Boolean    read FEnabled write FEnabled;
+    { Configure and execute a single-channel staircase voltage sweep,
+      returning measured current samples in sweep-point order. }
+    function StaircaseVoltageSweepCurrent(AStart, AStop: Double;
+      ASteps: Integer; ACurrentCompliance: Double; AHoldTime: Double = 0;
+      ADelayTime: Double = 0): TArray<Double>;
+    { Extract the current measurement token for this SMU from an XE response. }
+    function ParseSweepCurrent(const ARawResponse: string;
+      AExpectedPoints: Integer): TArray<Double>;
+
+    property Channel: TChannelNr read FChannel;
+    property IsEnabled: Boolean read FEnabled write FEnabled;
   end;
 
 implementation
-
-{ ------------------------------------------------------------------ }
 
 constructor TB1511B.Create(writeProc: TWriteProc; askFunc: TAskFunc;
   channel: TChannelNr);
 begin
   inherited Create;
-  FWriteProc  := writeProc;
-  FAskFunc    := askFunc;
-  FChannel    := channel;
-  FVOutRange  := vorAuto;
+  FWriteProc := writeProc;
+  FAskFunc := askFunc;
+  FChannel := channel;
+  FVOutRange := vorAuto;
   FVMeasRange := vmrAuto;
   FIMeasRange := imrAuto;
-  FCompliance := 0.1;    { 100 mA default - safe for B1511B }
-  FEnabled    := False;
+  FCompliance := 0.1;
+  FEnabled := False;
 end;
 
 destructor TB1511B.Destroy;
@@ -126,120 +84,104 @@ end;
 
 procedure TB1511B.SendCmd(const cmd: string);
 begin
-  FWriteProc(cmd);   { routes through TB1500.Write -> ERR? check }
+  FWriteProc(cmd);
 end;
 
 function TB1511B.QueryInstr(const cmd: string): string;
 begin
-  Result := FAskFunc(cmd);   { routes through TB1500.Ask }
+  Result := FAskFunc(cmd);
 end;
-
-{ ------------------------------------------------------------------ }
 
 procedure TB1511B.EnableOutputs;
 var
-  mb : TMessageBuilder;
-  nr : TChannelNr;
+  MB: TMessageBuilder;
 begin
-  nr := FChannel;
-  mb := TMessageBuilder.Create;
+  MB := TMessageBuilder.Create;
   try
-    SendCmd(mb.CN(nr).Message);
+    SendCmd(MB.CN(FChannel).Message);
     FEnabled := True;
   finally
-    mb.Free;
+    MB.Free;
   end;
 end;
 
 procedure TB1511B.DisableOutputs;
 var
-  mb : TMessageBuilder;
+  MB: TMessageBuilder;
 begin
-  mb := TMessageBuilder.Create;
+  MB := TMessageBuilder.Create;
   try
-    SendCmd(mb.CL(FChannel).Message);
+    SendCmd(MB.CL(FChannel).Message);
     FEnabled := False;
   finally
-    mb.Free;
+    MB.Free;
   end;
 end;
 
 procedure TB1511B.SourceConfig(outputRange: TVOutputRange; compliance: Double);
 begin
-  FVOutRange  := outputRange;
+  FVOutRange := outputRange;
   FCompliance := compliance;
 end;
 
-
-
 procedure TB1511B.SetVoltage(v: Double);
 var
-  mb : TMessageBuilder;
+  MB: TMessageBuilder;
 begin
   if not FEnabled then
     EnableOutputs;
-
-  mb := TMessageBuilder.Create;
+  MB := TMessageBuilder.Create;
   try
-    SendCmd(mb.DV(FChannel, FVOutRange, v, FCompliance).Message);
+    SendCmd(MB.DV(FChannel, FVOutRange, v, FCompliance).Message);
   finally
-    mb.Free;
+    MB.Free;
   end;
 end;
 
 function TB1511B.GetVoltage: Double;
 var
-  mb  : TMessageBuilder;
-  raw : string;
+  MB: TMessageBuilder;
+  Raw: string;
 begin
-  if not FEnabled then
-    EnableOutputs;
-
-  mb := TMessageBuilder.Create;
+  if not FEnabled then EnableOutputs;
+  MB := TMessageBuilder.Create;
   try
-    raw := QueryInstr(mb.TV(FChannel, FVMeasRange).Message);
+    Raw := QueryInstr(MB.TV(FChannel, FVMeasRange).Message);
   finally
-    mb.Free;
+    MB.Free;
   end;
-  Result := ParseSpotMeasurement(raw);
+  Result := ParseSpotMeasurement(Raw);
 end;
 
 function TB1511B.GetCurrent: Double;
 var
-  mb  : TMessageBuilder;
-  raw : string;
+  MB: TMessageBuilder;
+  Raw: string;
 begin
-  if not FEnabled then
-    EnableOutputs;
-
-  mb := TMessageBuilder.Create;
+  if not FEnabled then EnableOutputs;
+  MB := TMessageBuilder.Create;
   try
-    raw := QueryInstr(mb.TI(FChannel, FIMeasRange).Message);
+    Raw := QueryInstr(MB.TI(FChannel, FIMeasRange).Message);
   finally
-    mb.Free;
+    MB.Free;
   end;
-  Result := ParseSpotMeasurement(raw);
+  Result := ParseSpotMeasurement(Raw);
 end;
 
 function TB1511B.MeasureSpot: Double;
 var
-  mb  : TMessageBuilder;
-  raw : string;
+  MB: TMessageBuilder;
+  Raw: string;
 begin
-  if not FEnabled then
-    EnableOutputs;
-
-  mb := TMessageBuilder.Create;
+  if not FEnabled then EnableOutputs;
+  MB := TMessageBuilder.Create;
   try
-    // Trigger measurement using XE
-    raw := QueryInstr(mb.XE.Message);
+    Raw := QueryInstr(MB.XE.Message);
   finally
-    mb.Free;
+    MB.Free;
   end;
-
-  Result := ParseSpotMeasurement(raw);
+  Result := ParseSpotMeasurement(Raw);
 end;
-
 
 procedure TB1511B.VMeasRangeConfig(vrange: TVMeasRange);
 begin
@@ -258,13 +200,9 @@ var
 begin
   Result.Voltage := 0.0;
   Result.Current := 0.0;
-  Result.Status  := msNormal;
-
-  // Parse raw comma-separated string into module tokens
+  Result.Status := msNormal;
   Tokens := ParseFMTResponse(ARawResponse);
-
   for Token in Tokens do
-  begin
     if Token.Channel = Ord(FChannel) then
     begin
       Result.Status := Token.Status;
@@ -273,7 +211,61 @@ begin
       else if Token.DataType = dtCurrent then
         Result.Current := Token.Value;
     end;
+end;
+
+function TB1511B.ParseSweepCurrent(const ARawResponse: string;
+  AExpectedPoints: Integer): TArray<Double>;
+var
+  Tokens: TFMTResponseArray;
+  Token: TFMTResponse;
+  I: Integer;
+begin
+  Tokens := ParseFMTResponse(ARawResponse);
+  SetLength(Result, 0);
+  for Token in Tokens do
+    if (Token.Channel = Ord(FChannel)) and (Token.DataType = dtCurrent) then
+    begin
+      I := Length(Result);
+      SetLength(Result, I + 1);
+      Result[I] := Token.Value;
+    end;
+
+  if Length(Result) <> AExpectedPoints then
+    raise EConvertError.CreateFmt(
+      'Staircase sweep returned %d current values; expected %d. Response: %s',
+      [Length(Result), AExpectedPoints, ARawResponse]);
+end;
+
+function TB1511B.StaircaseVoltageSweepCurrent(AStart, AStop: Double;
+  ASteps: Integer; ACurrentCompliance: Double; AHoldTime,
+  ADelayTime: Double): TArray<Double>;
+var
+  MB: TMessageBuilder;
+  Raw: string;
+begin
+  if (ASteps < 1) or (ASteps > 10001) then
+    raise EArgumentOutOfRangeException.Create('Sweep points must be in the range 1..10001.');
+  if ACurrentCompliance <= 0 then
+    raise EArgumentOutOfRangeException.Create('Current compliance must be positive.');
+  if not FEnabled then
+    EnableOutputs;
+
+  MB := TMessageBuilder.Create;
+  try
+    { MM mode 2 selects staircase sweep; CMM 1 configures current measurement.
+      WM 2 enables automatic abort and returns to the start value after sweep. }
+    SendCmd(MB.CMM(FChannel, 1)
+      .MM(2, [FChannel])
+      .WM(2, 1)
+      .WT(AHoldTime, ADelayTime)
+      .WV(FChannel, 1, FVOutRange, AStart, AStop, ASteps,
+        ACurrentCompliance)
+      .Message);
+    Raw := QueryInstr(MB.XE.Message);
+  finally
+    MB.Free;
   end;
+  Result := ParseSweepCurrent(Raw, ASteps);
 end;
 
 end.
