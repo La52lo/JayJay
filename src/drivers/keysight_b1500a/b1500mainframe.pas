@@ -1,45 +1,80 @@
-﻿unit B1500Mainframe;
+unit B1500Mainframe;
 
 interface
 
 uses
-  SysUtils, VisaTransport, B1500Constants, MessageBuilder,
-  B1500Module, b1511b;
+  SysUtils, VisaTransport, B1500Constants, MessageBuilder, B1500Module, b1511b;
 
 const
   DEFAULT_TIMEOUT_MS = 10000;
-  CAL_TIMEOUT_MS = 30000;
+  CAL_TIMEOUT_MS     = 30000;
+  DEFAULT_COMPLIANCE = 0.05;  { 50 mA }
+  DEFAULT_SETTLETIME = 0.2;
 
 type
   EB1500Error = class(Exception);
 
   TB1500 = class
   private
-    FTransport: TVisaTransport;
-    FSMU1: TB1511B;
-    FSMU2: TB1511B;
+    FTransport  : TVisaTransport;
+    FAddress    : string;
+    FCompliance : Double;
+    FSMU1       : TB1511B;
+    FSMU2       : TB1511B;
+
     procedure RawWrite(const cmd: string);
     function RawAsk(const cmd: string): string;
     procedure CheckInstrumentError(const context: string);
     procedure FindModules;
     function GetConnected: Boolean;
+    procedure RequireConnection;
   public
     constructor Create(const gpibAddress: string;
-      timeoutMs: LongWord = DEFAULT_TIMEOUT_MS);
+                       ACompliance: Double = DEFAULT_COMPLIANCE;
+                       timeoutMs: LongWord = DEFAULT_TIMEOUT_MS);
     destructor Destroy; override;
+
+    { Low-level transport }
     procedure Write(const cmd: string);
     function Ask(const cmd: string): string;
+
+    { Calibration & Output Control }
     procedure SelfCalibration;
+    procedure EnableOutputs;
+    procedure DisableOutputs;
     procedure DisableAllChannels;
+
+    { Configuration }
     procedure SetDataFormat(const AFormatStr: string = '1,0');
     procedure SetMeasurementModeSpot(const AChannels: array of TChannelNr);
     procedure SetMeasurementModeSpotIV(AChannel: TChannelNr; AMode: Integer);
     procedure EnableChannels(const AChannels: array of TChannelNr);
     procedure SetMeasurementConfig;
     procedure SetIntegrationTimePLC(APLC: Integer = 1;
-      AADCType: TADCType = adcHighResolution);
+                                    AADCType: TADCType = adcHighResolution);
     procedure AllChannelSaveAndZero;
     procedure AllChannelRestore;
+
+    { SMU Access & Voltage Control }
+    function GetSMU(ASmu: Integer): TB1511B;
+    procedure SetVoltage(ASmu: Integer; V: Double);
+    function CheckVoltage(ASmu: Integer; VExpected: Double;
+                          Tolerance: Double = 0.5): Double;
+    function SetAndCheckVoltage(ASmu: Integer; V: Double;
+                                SettleTime: Double = DEFAULT_SETTLETIME): Double;
+
+    { Measurements & Sweeps }
+    function MeasureCurrent(ASmu: Integer;
+                            ARangeConfig: TIMeasRange = imr1mA): Double;
+    function MeasureVoltageReadback(ASmu: Integer): Double;
+    function MeasureResistance(VSource, AInitialWait,
+                               AMeasureTime: Double): Double;
+    function SweepVoltageMeasureResistance(
+      const AVoltages: TArray<Double>;
+      AInitialWait: Double = 0.5;
+      AMeasureTime: Double = 0.5;
+      const AOnPoint: TProc<Double, Double> = nil): TArray<Double>;
+
     function ExecuteSynchronousMeasurement: TFMTResponseArray;
     function ExecuteMeasurementRaw: string;
 
@@ -57,24 +92,36 @@ type
       ACurrentCompliance: Double; AHoldTime: Double = 0;
       ADelayTime: Double = 0): TArray<Double>;
 
-    property SMU1: TB1511B read FSMU1;
-    property SMU2: TB1511B read FSMU2;
-    property Connected: Boolean read GetConnected;
+    property Address    : string  read FAddress;
+    property Compliance : Double  read FCompliance write FCompliance;
+    property Connected  : Boolean read GetConnected;
+    property SMU1       : TB1511B read FSMU1;
+    property SMU2       : TB1511B read FSMU2;
   end;
 
 implementation
 
-constructor TB1500.Create(const gpibAddress: string; timeoutMs: LongWord);
+procedure SleepSeconds(ASeconds: Double);
+begin
+  if ASeconds > 0 then
+    Sleep(Round(ASeconds * 1000));
+end;
+
+constructor TB1500.Create(const gpibAddress: string; ACompliance: Double;
+  timeoutMs: LongWord);
 var
   MB: TMessageBuilder;
 begin
   inherited Create;
-  FSMU1 := nil;
-  FSMU2 := nil;
-  FTransport := TVisaTransport.Create(gpibAddress, timeoutMs);
-  MB := TMessageBuilder.Create;
+  FAddress    := gpibAddress;
+  FCompliance := ACompliance;
+  FSMU1       := nil;
+  FSMU2       := nil;
+  FTransport  := TVisaTransport.Create(gpibAddress, timeoutMs);
+  MB          := TMessageBuilder.Create;
   try
     Write(MB.Rst.Fmt().Message);
+    SetDataFormat('1,0');
     FindModules;
     EnableChannels([Channel_1, Channel_2]);
     SetMeasurementConfig;
@@ -88,7 +135,10 @@ destructor TB1500.Destroy;
 begin
   try
     if Assigned(FTransport) then
+    begin
+      DisableOutputs;
       DisableAllChannels;
+    end;
   except
   end;
   FreeAndNil(FSMU1);
@@ -116,10 +166,10 @@ begin
   if (Length(Resp) >= 2) and (Resp[1] = '+') then
   begin
     Code := Copy(Resp, 2, 1);
-    if Code = '0' then Exit;
+    if Code = '0' then
+      Exit;
   end;
-  raise EB1500Error.CreateFmt('B1500 instrument error after "%s": %s',
-    [context, Resp]);
+  raise EB1500Error.CreateFmt('B1500 instrument error after "%s": %s', [context, Resp]);
 end;
 
 procedure TB1500.Write(const cmd: string);
@@ -153,8 +203,7 @@ begin
     end;
   if Count = 0 then
     raise EB1500Error.Create('FindModules: no B1511B/B1511A found. UNT? response: ' + Raw);
-  SMUMsg := Format('Found %d B1511B module(s). SMU1=ch%d',
-    [Count, Ord(FSMU1.Channel)]);
+  SMUMsg := Format('Found %d B1511B module(s). SMU1=ch%d', [Count, Ord(FSMU1.Channel)]);
   if Assigned(FSMU2) then
     SMUMsg := SMUMsg + Format(', SMU2=ch%d', [Ord(FSMU2.Channel)]);
 end;
@@ -164,6 +213,186 @@ begin
   Result := FTransport <> nil;
 end;
 
+procedure TB1500.RequireConnection;
+begin
+  if not GetConnected then
+    raise EInvalidOp.Create('B1500 not connected.');
+end;
+
+function TB1500.GetSMU(ASmu: Integer): TB1511B;
+begin
+  case ASmu of
+    1: Result := FSMU1;
+    2: Result := FSMU2;
+  else
+    raise EArgumentOutOfRangeException.CreateFmt('SMU must be 1 or 2, got %d.', [ASmu]);
+  end;
+  if not Assigned(Result) then
+    raise EB1500Error.CreateFmt('SMU%d is not initialized.', [ASmu]);
+end;
+
+procedure TB1500.SelfCalibration;
+var
+  Resp: string;
+begin
+  RequireConnection;
+  FTransport.SetTimeout(CAL_TIMEOUT_MS);
+  try
+    Resp := Trim(RawAsk('*CAL?'));
+  finally
+    FTransport.SetTimeout(DEFAULT_TIMEOUT_MS);
+  end;
+  if Resp <> '0' then
+    raise EB1500Error.Create('Self-calibration failed. Instrument response: ' + Resp);
+end;
+
+procedure TB1500.EnableOutputs;
+begin
+  RequireConnection;
+  if Assigned(FSMU1) then FSMU1.EnableOutputs;
+  if Assigned(FSMU2) then FSMU2.EnableOutputs;
+  Sleep(50);
+end;
+
+procedure TB1500.DisableOutputs;
+begin
+  if not GetConnected then Exit;
+  try
+    if Assigned(FSMU1) then FSMU1.DisableOutputs;
+    if Assigned(FSMU2) then FSMU2.DisableOutputs;
+  except
+    { silently ignore — safe even if already disconnected }
+  end;
+end;
+
+procedure TB1500.DisableAllChannels;
+begin
+  RawWrite('CL');
+  if Assigned(FSMU1) then FSMU1.IsEnabled := False;
+  if Assigned(FSMU2) then FSMU2.IsEnabled := False;
+end;
+
+procedure TB1500.SetVoltage(ASmu: Integer; V: Double);
+var
+  SMU: TB1511B;
+begin
+  RequireConnection;
+  SMU := GetSMU(ASmu);
+  SMU.EnableOutputs;
+  SMU.SourceConfig(TVOutputRange.vorAuto, FCompliance);
+  SMU.SetVoltage(V);
+end;
+
+function TB1500.CheckVoltage(ASmu: Integer; VExpected: Double;
+  Tolerance: Double): Double;
+var
+  SMU: TB1511B;
+  VMeas: Double;
+begin
+  RequireConnection;
+  SMU := GetSMU(ASmu);
+  SMU.VMeasRangeConfig(vmrFix2V);
+  SMU.EnableOutputs;
+  SleepSeconds(0.2);
+  VMeas := SMU.GetVoltage;
+  if (VExpected <> 0.0) and (Abs((VExpected - VMeas) / VExpected) > Tolerance) then
+    raise EInvalidOp.CreateFmt(
+      'SMU%d: measured %.4f V deviates more than %.0f%% from expected %.4f V.',
+      [ASmu, VMeas, Tolerance * 100, VExpected]);
+  Result := VMeas;
+end;
+
+function TB1500.SetAndCheckVoltage(ASmu: Integer; V: Double;
+  SettleTime: Double): Double;
+begin
+  SetVoltage(ASmu, V);
+  SleepSeconds(SettleTime);
+  Result := CheckVoltage(ASmu, V);
+end;
+
+function TB1500.MeasureCurrent(ASmu: Integer; ARangeConfig: TIMeasRange): Double;
+var
+  SMU: TB1511B;
+begin
+  RequireConnection;
+  SMU := GetSMU(ASmu);
+  SMU.IMeasRangeConfig(ARangeConfig);
+  SMU.EnableOutputs;
+  Result := SMU.GetCurrent;
+end;
+
+function TB1500.MeasureVoltageReadback(ASmu: Integer): Double;
+var
+  SMU: TB1511B;
+begin
+  RequireConnection;
+  SMU := GetSMU(ASmu);
+  SMU.VMeasRangeConfig(vmrFix2V);
+  SMU.EnableOutputs;
+  Result := SMU.GetVoltage;
+end;
+
+function TB1500.MeasureResistance(VSource, AInitialWait,
+  AMeasureTime: Double): Double;
+var
+  SMU1Ref, SMU2Ref: TB1511B;
+  RawResp: string;
+  Reading1, Reading2: TSMUSpotReading;
+  SettleMs: Cardinal;
+  PLC: Integer;
+begin
+  RequireConnection;
+  SMU1Ref := GetSMU(1);
+  SMU2Ref := GetSMU(2);
+  SettleMs := Round(AInitialWait * 1000);
+
+  { One power-line cycle is 20ms; set the number of PLC integrations. }
+  PLC := Round(AMeasureTime / 0.02);
+  SetIntegrationTimePLC(PLC);
+
+  SMU1Ref.SetVoltage(VSource);
+  if SettleMs > 0 then
+    Sleep(SettleMs);
+
+  { Trigger simultaneous acquisition across SMU1 & SMU2 }
+  RawResp := ExecuteMeasurementRaw;
+
+  Reading1 := SMU1Ref.ExtractReading(RawResp);
+  Reading2 := SMU2Ref.ExtractReading(RawResp);
+
+  { Calculate junction resistance: R = |(V_smu1 - V_smu2) / I_smu1| }
+  if Abs(Reading1.Current) > 1e-14 then
+    Result := Abs((VSource - Reading2.Voltage) / Reading1.Current)
+  else
+    Result := 1e12; { Open circuit fallback }
+end;
+
+function TB1500.SweepVoltageMeasureResistance(
+  const AVoltages: TArray<Double>;
+  AInitialWait, AMeasureTime: Double;
+  const AOnPoint: TProc<Double, Double>): TArray<Double>;
+var
+  I: Integer;
+  CycleWait: Double;
+begin
+  RequireConnection;
+  SetLength(Result, Length(AVoltages));
+  if Length(AVoltages) = 0 then
+    Exit;
+
+  for I := Low(AVoltages) to High(AVoltages) do
+  begin
+    if (I = Low(AVoltages)) and (High(AVoltages) <> 0) then
+      CycleWait := AInitialWait  { let it sit before first measurement }
+    else
+      CycleWait := 0.6;
+
+    Result[I] := MeasureResistance(AVoltages[I], CycleWait, AMeasureTime);
+    if Assigned(AOnPoint) then
+      AOnPoint(AVoltages[I], Result[I]);
+  end;
+end;
+
 procedure TB1500.SetMeasurementConfig;
 var
   MB: TMessageBuilder;
@@ -171,12 +400,12 @@ begin
   MB := TMessageBuilder.Create;
   try
     Write(MB.MY_AAD(Channel_1)
-      .MY_AIT(Channel_2).MY_AIT(Channel_1)
-      .MY_FL(Channel_2).MY_FL(Channel_1)
-      .MY_RI(Channel_2).MY_RI(Channel_1)
-      .CMM(Channel_1, 1).CMM(Channel_2, 2)
-      .DV(Channel_2, vorAuto, 0.0, 0.1)
-      .MM(1, [Channel_1, Channel_2]).Message);
+            .MY_AIT(Channel_2).MY_AIT(Channel_1)
+            .MY_FL(Channel_2).MY_FL(Channel_1)
+            .MY_RI(Channel_2).MY_RI(Channel_1)
+            .CMM(Channel_1, 1).CMM(Channel_2, 2)
+            .DV(Channel_2, vorAuto, 0.0, 0.1)
+            .MM(1, [Channel_1, Channel_2]).Message);
   finally
     MB.Free;
   end;
@@ -247,7 +476,6 @@ function TB1500.ExecuteStaircaseStream(const AVoltages: TArray<Double>;
   AInitialWait, AMeasureTime: Double;
   const AOnSample: TProc<Double, Double>): Integer;
 const
-  { FMT 5 is 3 header bytes + 12 ASCII measurement bytes + comma. }
   FMT5_RECORD_BYTES = 16;
   MIN_CURRENT = 1e-14;
 var
@@ -257,11 +485,10 @@ var
   Header, ValueText: string;
   Current, Voltage, Resistance: Double;
   Settings: TFormatSettings;
-  FmtRestored, TerminatorRestored: Boolean;
+  TerminatorRestored: Boolean;
 begin
   Result := 0;
-  if Length(AVoltages) = 0 then
-    Exit;
+  if Length(AVoltages) = 0 then Exit;
   if not Assigned(FSMU1) then
     raise EB1500Error.Create('ExecuteStaircaseStream requires SMU1.');
   if not Assigned(AOnSample) then
@@ -269,41 +496,29 @@ begin
   if AMeasureTime < 0 then
     raise EArgumentOutOfRangeException.Create('Measurement time cannot be negative.');
 
-  { WV specifies a linear sweep. Require the supplied point list to match
-    that sweep so the callback voltage stays aligned with each current. }
   if Length(AVoltages) > 2 then
     for I := 1 to High(AVoltages) - 1 do
-      if Abs((AVoltages[I] - AVoltages[I - 1]) -
-        (AVoltages[1] - AVoltages[0])) >
-        1e-9 * Max(1.0, Abs(AVoltages[I])) then
-        raise EArgumentException.Create(
-          'Staircase sweep voltages must be evenly spaced.');
+      if Abs((AVoltages[I] - AVoltages[I - 1]) - (AVoltages[1] - AVoltages[0])) > 1e-9 * Max(1.0, Abs(AVoltages[I])) then
+        raise EArgumentException.Create('Staircase sweep voltages must be evenly spaced.');
 
   PLC := Round(AMeasureTime / 0.02);
-  if PLC < 1 then
-    PLC := 1;
+  if PLC < 1 then PLC := 1;
   Settings := TFormatSettings.Invariant;
-  FmtRestored := False;
   TerminatorRestored := False;
   MB := TMessageBuilder.Create;
   try
     try
-      { Configure measurement time and staircase current measurement. }
       SetIntegrationTimePLC(PLC);
       Write(MB.CMM(FSMU1.Channel, 1)
-        .MM(2, [FSMU1.Channel])
-        .WM(2, 1)
-        .WT(AInitialWait, 0)
-        .WV(FSMU1.Channel, 1, vorAuto, AVoltages[0],
-          AVoltages[High(AVoltages)], Length(AVoltages), 0.1)
-        .Message);
+              .MM(2, [FSMU1.Channel])
+              .WM(2, 1)
+              .WT(AInitialWait, 0)
+              .WV(FSMU1.Channel, 1, vorAuto, AVoltages[0], AVoltages[High(AVoltages)], Length(AVoltages), 0.1)
+              .Message);
 
-      { Set FMT while LF termination is still active; Write performs ERRX?. }
       Write(MB.FmtCommaTerminated.Message);
       FTransport.SetReadTermination(',', True);
 
-      { Do not call Write here: its ERRX? query would consume/interleave with
-        the measurement stream. XE output is read directly below. }
       RawWrite(MB.XE.Message);
 
       for I := 0 to High(AVoltages) do
@@ -342,43 +557,17 @@ begin
         Inc(Result);
       end;
     finally
-      { Restore LF before issuing the checked FMT command (whose ERRX? reply
-        is line-terminated), even if parsing or the callback raised. }
       try
         FTransport.SetReadTermination(#10, True);
         TerminatorRestored := True;
       finally
         if TerminatorRestored then
-        begin
           Write('FMT 1,0');
-          FmtRestored := True;
-        end;
       end;
     end;
   finally
     MB.Free;
   end;
-end;
-
-procedure TB1500.SelfCalibration;
-var
-  Resp: string;
-begin
-  FTransport.SetTimeout(CAL_TIMEOUT_MS);
-  try
-    Resp := Trim(RawAsk('*CAL?'));
-  finally
-    FTransport.SetTimeout(DEFAULT_TIMEOUT_MS);
-  end;
-  if Resp <> '0' then
-    raise EB1500Error.Create('Self-calibration failed. Instrument response: ' + Resp);
-end;
-
-procedure TB1500.DisableAllChannels;
-begin
-  RawWrite('CL');
-  if Assigned(FSMU1) then FSMU1.IsEnabled := False;
-  if Assigned(FSMU2) then FSMU2.IsEnabled := False;
 end;
 
 procedure TB1500.AllChannelSaveAndZero;
@@ -417,8 +606,7 @@ begin
   if ASteps < 1 then
     raise EArgumentOutOfRangeException.Create('Sweep step count must be at least one.');
 
-  Currents := FSMU1.StaircaseVoltageSweepCurrent(AStart, AStop, ASteps,
-    ACurrentCompliance, AHoldTime, ADelayTime);
+  Currents := FSMU1.StaircaseVoltageSweepCurrent(AStart, AStop, ASteps, ACurrentCompliance, AHoldTime, ADelayTime);
   SetLength(Result, Length(Currents));
   for I := 0 to High(Currents) do
   begin
