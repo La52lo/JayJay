@@ -46,9 +46,11 @@ type
   TAnnealConfigArray =  TArray<TAnnealConfig>;
   TDoubleArray  = array of Double;
   TProbingParameters = record
-      VoltageList        : TDoubleArray;
-      MeasureTime        : Double;
-      InitialWait        : Double;    { s,  default 1.0    }
+    StartVoltage : Double;
+    StepSize     : Double;
+    StepNumber   : Integer;
+    MeasureTime  : Double;
+    InitialWait  : Double;    { s, default 1.0 }
   end;
 
   TSamplePoint = record
