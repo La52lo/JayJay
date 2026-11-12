@@ -210,34 +210,58 @@ end;
 
 function TAnnealManager.ProbeResistance(AParams: TProbingParameters): TProbingResult;
 var
-  DefaultVoltages: TArray<Double>;
   Voltages: TArray<Double>;
+  StartV, StepV: Double;
+  Steps, I, Count: Integer;
+  ReadingsList: TDoubleArray;
 begin
-  if AParams.VoltageList = nil then
+  if AParams.StepNumber <= 0 then
   begin
-    SetLength(DefaultVoltages, 4);
-    DefaultVoltages := [-0.01, -0.005, 0.005, 0.1];
-    Voltages := DefaultVoltages;
+    { Sensible default linear sweep if uninitialized }
+    StartV := -0.01;
+    StepV  := 0.01;
+    Steps  := 5;
   end
   else
-    Voltages := TArray<Double>(AParams.VoltageList);
+  begin
+    StartV := AParams.StartVoltage;
+    StepV  := AParams.StepSize;
+    Steps  := AParams.StepNumber;
+  end;
+
+  SetLength(Voltages, Steps);
+  for I := 0 to Steps - 1 do
+    Voltages[I] := StartV + I * StepV;
+
+  SetLength(ReadingsList, Steps);
+  Count := 0;
 
   FB1500.SetMeasurementConfig;
   try
-    Result.Readings := TDoubleArray(FB1500.SweepVoltageMeasureResistance(
+    FB1500.ExecuteStaircaseStream(
       Voltages,
       AParams.InitialWait,
       AParams.MeasureTime,
       procedure(V, R: Double)
       begin
+        if Count < Length(ReadingsList) then
+        begin
+          ReadingsList[Count] := R;
+          Inc(Count);
+        end;
         FObserver.MeasurementPoint(V, R);
-      end));
+      end);
   finally
     FB1500.AllChannelSaveAndZero;
   end;
 
+  SetLength(ReadingsList, Count);
+  Result.Readings       := ReadingsList;
   Result.MeanResistance := MeanDoubleArray(Result.Readings);
   Result.StdResistance  := StdDoubleArray(Result.Readings);
+  Result.Success        := Count = Steps;
+  Result.ErrorMsg       := '';
+
   FObserver.Log(Format('Resistance: %.1f +/- %.1f Ohm',
     [Result.MeanResistance, Result.StdResistance]));
 end;
@@ -252,7 +276,6 @@ begin
   HWRes.ProbingResult := Result;
   FObserver.TaskFinished(HWRes);
 end;
-
 procedure TAnnealManager.AnnealPulse(VPulse, AT: Double);
 begin
   // Only pulse SMU1; SMU2 is already held at 0 V
