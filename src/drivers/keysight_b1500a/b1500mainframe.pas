@@ -513,7 +513,9 @@ begin
               .MM(2, [FSMU1.Channel])
               .WM(2, 1)
               .WT(AInitialWait, 0)
-              .WV(FSMU1.Channel, 1, vorAuto, AVoltages[0], AVoltages[High(AVoltages)], Length(AVoltages), 0.1)
+              .WV(FSMU1.Channel, 1, vorAuto,
+                  AVoltages[0], AVoltages[High(AVoltages)],
+                  Length(AVoltages), FCompliance)
               .Message);
 
       Write(MB.FmtCommaTerminated.Message);
