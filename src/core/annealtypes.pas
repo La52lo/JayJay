@@ -51,6 +51,7 @@ type
     StepNumber   : Integer;
     MeasureTime  : Double;
     InitialWait  : Double;    { s, default 1.0 }
+    function GetVoltages: TArray<Double>;
   end;
 
   TSamplePoint = record
@@ -237,6 +238,21 @@ begin
     SetupStatus[itAnalyzer].OK := False;
     SetupStatus[itProber].OK  := False;
     SetupStatus[itHeater].OK := False;
+end;
+
+function TProbingParameters.GetVoltages: TArray<Double>;
+var
+ I:Integer;
+begin
+    if StepNumber <= 0 then
+    begin
+      SetLength(Result,0);
+      Exit;
+    end;
+
+    SetLength(Result, StepNumber);
+    for I := 0 to StepNumber -1  do
+      Result[I] := StartVoltage + I*StepSize;
 end;
 
 procedure TAnnealResult.AddResistanceSample(ATime, AValue: Double);

@@ -56,7 +56,7 @@ object ProbeConfigForm: TProbeConfigForm
       373
       37)
     object Button1: TButton
-      Left = 187
+      Left = 181
       Top = 6
       Width = 75
       Height = 25
@@ -65,10 +65,9 @@ object ProbeConfigForm: TProbeConfigForm
       Default = True
       ModalResult = 1
       TabOrder = 0
-      ExplicitLeft = 181
     end
     object Button2: TButton
-      Left = 274
+      Left = 268
       Top = 6
       Width = 75
       Height = 25
@@ -77,7 +76,6 @@ object ProbeConfigForm: TProbeConfigForm
       Caption = 'Cancel'
       ModalResult = 2
       TabOrder = 1
-      ExplicitLeft = 268
     end
   end
 end

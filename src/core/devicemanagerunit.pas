@@ -220,9 +220,12 @@ begin
   FDisplayName := 'Single Resistance';
   with FConfig do
     begin
-      VoltageList        := [0.01,0.005,-0.005,-0.01];
-      MeasureTime        := 0.5;
-      InitialWait        := 1.0;    { s,  default 1.0    }
+      //VoltageList        := [0.01,0.005,-0.005,-0.01];
+      StartVoltage        := 0.01;
+      StepSize            := -0.001;
+      StepNumber          := 21;
+      MeasureTime         := 0.5;
+      InitialWait         := 1.0;    { s,  default 1.0    }
     end;
 end;
 
@@ -232,9 +235,11 @@ begin
   FDisplayName := 'Batch Resistance';
   with FConfig do
     begin
-      VoltageList        := [0.01,0.005,-0.005,-0.01];
-      MeasureTime        := 0.5;
-      InitialWait        := 1.0;    { s,  default 1.0    }
+      StartVoltage        := 0.01;
+      StepSize            := -0.001;
+      StepNumber          := 21;
+      MeasureTime         := 0.5;
+      InitialWait         := 1.0;    { s,  default 1.0    }
     end;
 end;
 
@@ -294,12 +299,14 @@ procedure TProbeTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 var
 I : Integer;
+VoltageList : TArray<Double>;
 begin
+VoltageList := Self.FConfig.GetVoltages;
 SetLength(XValues,Length(Self.Result.Readings));
 SetLength(YValues,Length(XValues));
 for I := Low(XValues) to High(XValues) do
   begin
-      XValues[I]:= Self.FConfig.VoltageList[I];
+      XValues[I]:= VoltageList[I];
       YValues[I]:= Self.Result.Readings[I];
   end;
 
@@ -326,12 +333,14 @@ procedure TBatchProbeTask.GetChartPoints(var XValues,YValues: TArray<Double>;
                 AJunctionIndex: Integer);
 var
 I : Integer;
+VoltageList : TArray<Double>;
 begin
+VoltageList := Self.FConfig.GetVoltages;
 SetLength(XValues,Length(Self.Result[AJunctionIndex].ProbingResult.Readings));
 SetLength(YValues,Length(XValues));
 for I := Low(XValues) to High(XValues) do
   begin
-      XValues[I]:= Self.FConfig.VoltageList[I];
+      XValues[I]:= VoltageList[I];
       YValues[I]:= Self.Result[AJunctionIndex].ProbingResult.Readings[I];
   end;
 

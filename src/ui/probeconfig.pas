@@ -46,7 +46,11 @@ end;
 
 procedure TProbeConfigForm.InitializeFromConfig(AConfig: TProbingParameters;
                                                ATaskName:String);
+
+var
+VoltageList : TArray<Double>;
 begin
+  VoltageList := AConfig.GetVoltages;
   Caption := 'Configure Task: ' + ATaskName;
   with AConfig do begin
       if (Length(VoltageList) > 0) then
@@ -124,15 +128,10 @@ if not TryStrToFloat(Trim(ProbeConfigEditor.Values['Starting voltage [V]']),
   end;
 
   SetLength(VoltageList,0);
-  for i := 0 to NumberOfSteps-1  do
-  begin
-    if not (IsZero(StartingVoltage + i*StepSize)) then
-    begin
-      Setlength(VoltageList,Length(VoltageList)+1);
-      VoltageList[High(VoltageList)] :=  StartingVoltage + i*StepSize;
-    end;
-  end;
-  AConfig.VoltageList := VoltageList;
+
+  AConfig.StartVoltage := StartingVoltage;
+  AConfig.StepSize := StepSize;
+  AConfig.StepNumber := NumberOfSteps;
   AConfig.MeasureTime := MeasureTime;
   AConfig.InitialWait := InitialWait;
 

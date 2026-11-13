@@ -23,6 +23,7 @@ const
   DEFAULT_HEATER_ADDRESS   = 'GPIB0::7::INSTR';
   DEFAULT_PROBER_ADDRESS   = 'GPIB0::5::INSTR';
 
+
 type
   TAnnealManager = class
   private
@@ -39,7 +40,7 @@ type
     FRunSelfCal      : Boolean;
 
     function Anneal(const AParams: TAnnealConfig): TAnnealResult;
-    function ProbeResistance(AParams: TProbingParameters): TProbingResult;
+    function SweepResistance(AParams: TProbingParameters): TProbingResult;
   public
     constructor Create(
       AObserver              : IMeasurementObserver;
@@ -69,13 +70,13 @@ type
   end;
 
 implementation
-
+{
 procedure SleepSeconds(ASeconds: Double);
 begin
   if ASeconds > 0 then
     Sleep(Round(ASeconds * 1000));
 end;
-
+ }
 constructor TAnnealManager.Create(
   AObserver              : IMeasurementObserver;
   const AAnalyzerAddress : string = DEFAULT_ANALYZER_ADDRESS;
@@ -208,10 +209,10 @@ begin
   end;
 end;
 
-function TAnnealManager.ProbeResistance(AParams: TProbingParameters): TProbingResult;
+function TAnnealManager.SweepResistance(AParams: TProbingParameters): TProbingResult;
 var
   Voltages: TArray<Double>;
-  StartV, StepV: Double;
+  StartV, StopV: Double;
   Steps, I, Count: Integer;
   ReadingsList: TDoubleArray;
 begin
@@ -219,19 +220,18 @@ begin
   begin
     { Sensible default linear sweep if uninitialized }
     StartV := -0.01;
-    StepV  := 0.01;
     Steps  := 5;
+    StopV  := StartV + (Steps-1) * 0.001;
   end
   else
   begin
     StartV := AParams.StartVoltage;
-    StepV  := AParams.StepSize;
+    StopV  := AParams.StartVoltage + (AParams.StepNumber-1) * AParams.StepSize ;
     Steps  := AParams.StepNumber;
   end;
-
-  SetLength(Voltages, Steps);
-  for I := 0 to Steps - 1 do
-    Voltages[I] := StartV + I * StepV;
+  Voltages := AParams.GetVoltages;
+  if Length(Voltages) = 0 then
+      raise EArgumentOutOfRangeException.Create('StepNumber must be greater then zero');
 
   SetLength(ReadingsList, Steps);
   Count := 0;
@@ -239,9 +239,11 @@ begin
   FB1500.SetMeasurementConfig;
   try
     FB1500.ExecuteStaircaseStream(
-      Voltages,
+      StartV,
+      StopV,
       AParams.InitialWait,
       AParams.MeasureTime,
+      Steps,
       procedure(V, R: Double)
       begin
         if Count < Length(ReadingsList) then
@@ -271,7 +273,7 @@ var
   HWRes: THardwareResult;
 begin
   FObserver.TaskStarted;
-  Result := ProbeResistance(AParams);
+  Result := SweepResistance(AParams);
   HWRes.CommandType   := hcProbeSingle;
   HWRes.ProbingResult := Result;
   FObserver.TaskFinished(HWRes);
@@ -501,7 +503,7 @@ begin
           Break;
         FObserver.Log(Format('  [%d] %s ... ', [I + 1, Coord.ToString]));
         FObserver.TaskStarted();
-        M := ProbeResistance(AParams);
+        M := SweepResistance(AParams);
         SetLength(Result, Length(Result) + 1);
         CycleResult.ProbingResult := M;
         CycleResult.Coord := Coord;

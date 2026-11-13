@@ -1,9 +1,9 @@
-unit B1500Mainframe;
+﻿unit B1500Mainframe;
 
 interface
 
 uses
-  SysUtils, VisaTransport, B1500Constants, MessageBuilder, B1500Module, b1511b;
+  SysUtils,Math, VisaTransport, B1500Constants, MessageBuilder, B1500Module, b1511b;
 
 const
   DEFAULT_TIMEOUT_MS = 10000;
@@ -81,8 +81,8 @@ type
     { Start a staircase voltage sweep on SMU1 and stream each current result
       as a (voltage, resistance) pair to AOnSample. Returns samples relayed.
       AVoltages must describe the linear staircase configured by WV. }
-    function ExecuteStaircaseStream(const AVoltages: TArray<Double>;
-      AInitialWait, AMeasureTime: Double;
+    function ExecuteStaircaseStream(const AStartingVoltage,AStopVoltage,
+      AInitialWait, AMeasureTime: Double;AStep:Integer ;
       const AOnSample: TProc<Double, Double>): Integer;
 
     { Execute a staircase voltage sweep on SMU1, measuring its current,
@@ -472,9 +472,9 @@ begin
   Result := Ask('XE');
 end;
 
-function TB1500.ExecuteStaircaseStream(const AVoltages: TArray<Double>;
-  AInitialWait, AMeasureTime: Double;
-  const AOnSample: TProc<Double, Double>): Integer;
+function TB1500.ExecuteStaircaseStream(const AStartingVoltage,AStopVoltage,
+      AInitialWait, AMeasureTime: Double;AStep:Integer ;
+      const AOnSample: TProc<Double, Double>): Integer;
 const
   FMT5_RECORD_BYTES = 16;
   MIN_CURRENT = 1e-14;
@@ -488,18 +488,13 @@ var
   TerminatorRestored: Boolean;
 begin
   Result := 0;
-  if Length(AVoltages) = 0 then Exit;
+  if AStep <= 0 then Exit;
   if not Assigned(FSMU1) then
     raise EB1500Error.Create('ExecuteStaircaseStream requires SMU1.');
   if not Assigned(AOnSample) then
     raise EArgumentNilException.Create('AOnSample callback must be assigned.');
   if AMeasureTime < 0 then
     raise EArgumentOutOfRangeException.Create('Measurement time cannot be negative.');
-
-  if Length(AVoltages) > 2 then
-    for I := 1 to High(AVoltages) - 1 do
-      if Abs((AVoltages[I] - AVoltages[I - 1]) - (AVoltages[1] - AVoltages[0])) > 1e-9 * Max(1.0, Abs(AVoltages[I])) then
-        raise EArgumentException.Create('Staircase sweep voltages must be evenly spaced.');
 
   PLC := Round(AMeasureTime / 0.02);
   if PLC < 1 then PLC := 1;
@@ -514,8 +509,8 @@ begin
               .WM(2, 1)
               .WT(AInitialWait, 0)
               .WV(FSMU1.Channel, 1, vorAuto,
-                  AVoltages[0], AVoltages[High(AVoltages)],
-                  Length(AVoltages), FCompliance)
+                  AStartingVoltage, AStopVoltage,
+                  AStep, FCompliance)
               .Message);
 
       Write(MB.FmtCommaTerminated.Message);
@@ -523,7 +518,7 @@ begin
 
       RawWrite(MB.XE.Message);
 
-      for I := 0 to High(AVoltages) do
+      for I := 0 to AStep-1 do
       begin
         RawRecord := FTransport.ReadExact(FMT5_RECORD_BYTES);
         if (Length(RawRecord) <> FMT5_RECORD_BYTES) or
@@ -550,7 +545,10 @@ begin
             'Cannot parse FMT 5 current value at point %d: "%s"',
             [I + 1, ValueText]);
 
-        Voltage := AVoltages[I];
+        if AStep =1  then
+          Voltage := AStartingVoltage
+        else
+          Voltage := AStartingVoltage + (AStopVoltage - AStartingVoltage) * I/(AStep-1);
         if Abs(Current) > MIN_CURRENT then
           Resistance := Abs(Voltage / Current)
         else
