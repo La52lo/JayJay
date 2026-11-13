@@ -220,7 +220,7 @@ begin
   begin
     { Sensible default linear sweep if uninitialized }
     StartV := -0.01;
-    Steps  := 5;
+    Steps  := 20;
     StopV  := StartV + (Steps-1) * 0.001;
   end
   else
