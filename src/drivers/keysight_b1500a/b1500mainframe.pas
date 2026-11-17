@@ -514,18 +514,14 @@ begin
               .Message);
 
       Write(MB.FmtCommaTerminated.Message);
+
       FTransport.SetReadTermination(',', True);
 
       RawWrite(MB.XE.Message);
 
       for I := 0 to AStep-1 do
       begin
-        RawRecord := FTransport.ReadExact(FMT5_RECORD_BYTES);
-        if (Length(RawRecord) <> FMT5_RECORD_BYTES) or
-           (RawRecord[FMT5_RECORD_BYTES] <> ',') then
-          raise EConvertError.CreateFmt(
-            'Malformed FMT 5 sweep record at point %d: "%s"',
-            [I + 1, string(RawRecord)]);
+        RawRecord := FTransport.ReadFMT5Record(I = AStep-1);
 
         Header := Copy(string(RawRecord), 1, 3);
         ValueText := Trim(Copy(string(RawRecord), 4, 12));

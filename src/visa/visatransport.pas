@@ -113,7 +113,8 @@ type
     { Read exactly ACount bytes from the current VISA session. Intended for
       fixed-width B1500 streaming records when termchar termination is set. }
     function ReadExact(ACount: Integer): AnsiString;
-
+    function ReadLineRaw(AMaxBytes: Integer): AnsiString;
+    function ReadFMT5Record(IsLastRecord: Boolean): AnsiString;
     procedure SetTimeout(timeoutMs: LongWord);
     property Address: string read FAddr;
   end;
@@ -248,6 +249,126 @@ begin
         [ACount, FAddr]);
     Inc(totalRead, bytesRead);
   end;
+end;
+
+function TVisaTransport.ReadLineRaw(AMaxBytes: Integer): AnsiString;
+var
+  st: ViStatus;
+  bytesRead: ViUInt32;
+  totalRead: Integer;
+begin
+  Result := '';
+  if AMaxBytes <= 0 then Exit;
+
+  SetLength(Result, AMaxBytes);
+  totalRead := 0;
+
+  while totalRead < AMaxBytes do
+  begin
+    bytesRead := 0;
+
+    st := viRead(
+      FInstr,
+      @Result[totalRead + 1],
+      AMaxBytes - totalRead,
+      bytesRead);
+
+    CheckStatus(st, 'viRead (final FMT 5 record)');
+
+    if bytesRead = 0 then
+      raise EVISAError.Create('No data received in final FMT 5 record.');
+
+    Inc(totalRead, bytesRead);
+
+    if Result[totalRead] = #10 then
+      Break;
+  end;
+
+  SetLength(Result, totalRead);
+end;
+
+function TVisaTransport.ReadFMT5Record(
+  IsLastRecord: Boolean): AnsiString;
+const
+  FMT5_RECORD_BYTES = 16;
+  FMT5_DATA_BYTES = 15;
+  FMT5_FINAL_MAX_BYTES = 17; // 15 data + CR + LF
+var
+  st: ViStatus;
+  bytesRead: ViUInt32;
+  totalRead: Integer;
+  remaining: Integer;
+  Terminator: AnsiChar;
+begin
+  if FInstr = VI_NULL then
+    raise EVISAError.Create(
+      'Cannot read FMT 5 record: VISA session is not open.');
+
+  if not IsLastRecord then
+  begin
+    // Normal records: 15 data bytes + comma.
+    SetReadTermination(',', True);
+
+    Result := ReadExact(FMT5_RECORD_BYTES);
+
+    if (Length(Result) <> FMT5_RECORD_BYTES) or
+       (Result[FMT5_RECORD_BYTES] <> ',') then
+      raise EConvertError.CreateFmt(
+        'Malformed FMT 5 record: "%s"',
+        [string(Result)]);
+
+    Exit;
+  end;
+
+  // Final record: 15 data bytes + LF or CRLF.
+  SetReadTermination(#10, True);
+
+  SetLength(Result, FMT5_FINAL_MAX_BYTES);
+  totalRead := 0;
+
+  while totalRead < FMT5_FINAL_MAX_BYTES do
+  begin
+    remaining := FMT5_FINAL_MAX_BYTES - totalRead;
+    bytesRead := 0;
+
+    st := viRead(
+      FInstr,
+      @Result[totalRead + 1],
+      remaining,
+      bytesRead);
+
+    CheckStatus(st, 'viRead (final FMT 5 record)');
+
+    if bytesRead = 0 then
+      raise EVISAError.Create(
+        'No data received in final FMT 5 record.');
+
+    Inc(totalRead, Integer(bytesRead));
+
+    if Result[totalRead] = #10 then
+      Break;
+  end;
+
+  SetLength(Result, totalRead);
+
+  // Remove LF.
+  if (Length(Result) > 0) and
+     (Result[Length(Result)] = #10) then
+    Delete(Result, Length(Result), 1);
+
+  // Remove optional CR.
+  if (Length(Result) > 0) and
+     (Result[Length(Result)] = #13) then
+    Delete(Result, Length(Result), 1);
+
+  if Length(Result) <> FMT5_DATA_BYTES then
+    raise EConvertError.CreateFmt(
+      'Invalid final FMT 5 record length: %d, expected %d. Data="%s"',
+      [Length(Result), FMT5_DATA_BYTES, string(Result)]);
+
+  // Normalize final record to the same representation as normal records.
+  Terminator := ',';
+  Result := Result + AnsiString(Terminator);
 end;
 
 procedure TVisaTransport.Write(const cmd: string);

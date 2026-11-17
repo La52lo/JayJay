@@ -221,12 +221,12 @@ begin
     { Sensible default linear sweep if uninitialized }
     StartV := -0.01;
     Steps  := 20;
-    StopV  := StartV + (Steps-1) * 0.001;
+    StopV  := StartV + (Steps) * 0.001;
   end
   else
   begin
     StartV := AParams.StartVoltage;
-    StopV  := AParams.StartVoltage + (AParams.StepNumber-1) * AParams.StepSize ;
+    StopV  := AParams.StartVoltage + (AParams.StepNumber) * AParams.StepSize ;
     Steps  := AParams.StepNumber;
   end;
   Voltages := AParams.GetVoltages;
@@ -237,6 +237,7 @@ begin
   Count := 0;
 
   FB1500.SetMeasurementConfig;
+  try
   try
     FB1500.ExecuteStaircaseStream(
       StartV,
@@ -253,6 +254,10 @@ begin
         end;
         FObserver.MeasurementPoint(V, R);
       end);
+    except on E: Exception do
+     FB1500.Ask('ERRX?');
+     //FObserver.Log(E.Message);
+    end;
   finally
     FB1500.AllChannelSaveAndZero;
   end;

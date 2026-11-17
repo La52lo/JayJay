@@ -55,16 +55,17 @@ begin
   with AConfig do begin
       if (Length(VoltageList) > 0) then
       begin
-         ProbeConfigEditor.Values['Starting voltage [V]']:= VoltageList[0].ToString;
-         ProbeConfigEditor.Values['Number of steps']:= Length(VoltageList).ToString;
+         ProbeConfigEditor.Values['Starting voltage [V]']:= StartVoltage.ToString;
+         ProbeConfigEditor.Values['Number of steps']:= StepNumber.ToString;
       end;
       if (Length(VoltageList) > 1) then
       begin
          ProbeConfigEditor.Values['Step size [V]']
-                    := (VoltageList[1]-VoltageList[0]).ToString;
+                    := StepSize.ToString;
       end;
       ProbeConfigEditor.Values['Measure Time [s]']
                     := MeasureTime.ToString;
+                  // := FloatToStr(StartVoltage + (StepNumber-1) * StepSize);
       ProbeConfigEditor.Values['Initial Wait [s]']
                     := InitialWait.ToString;
 
