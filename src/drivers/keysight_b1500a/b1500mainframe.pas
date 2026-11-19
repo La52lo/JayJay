@@ -478,6 +478,7 @@ function TB1500.ExecuteStaircaseStream(const AStartingVoltage,AStopVoltage,
 const
   FMT5_RECORD_BYTES = 16;
   MIN_CURRENT = 1e-14;
+  MIN_VOLTAGE = 1e-5;
 var
   MB: TMessageBuilder;
   I, PLC: Integer;
@@ -545,7 +546,7 @@ begin
           Voltage := AStartingVoltage
         else
           Voltage := AStartingVoltage + (AStopVoltage - AStartingVoltage) * I/(AStep-1);
-        if Abs(Current) > MIN_CURRENT then
+        if (Abs(Current) > MIN_CURRENT) AND (Abs(Voltage) > MIN_VOLTAGE)  then
           Resistance := Abs(Voltage / Current)
         else
           Resistance := 1e12;

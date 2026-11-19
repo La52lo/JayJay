@@ -164,23 +164,37 @@ function MeanDoubleArray(const A: TDoubleArray): Double;
 var
   i: Integer;
   S: Double;
+  Skip: integer;
+const
+  RESISTANCE_NA = 0;
 begin
   if Length(A) = 0 then Exit(0.0);
   S := 0.0;
-  for i := 0 to High(A) do S := S + A[i];
-  Result := S / Length(A);
+  Skip := 0;
+  for i := 0 to High(A) do
+    if A[i] <> RESISTANCE_NA
+      then S := S + A[i]
+      else Inc(Skip);
+  Result := S / (Length(A)-Skip);
 end;
 
 function StdDoubleArray(const A: TDoubleArray): Double;
 var
   i: Integer;
   M, S: Double;
+  Skip: integer;
+const
+  RESISTANCE_NA = 0;
 begin
   if Length(A) = 0 then Exit(0.0);
   M := MeanDoubleArray(A);
   S := 0.0;
-  for i := 0 to High(A) do S := S + Sqr(A[i] - M);
-  Result := Sqrt(S / Length(A));
+  Skip := 0;
+  for i := 0 to High(A) do
+  if A[i] <> RESISTANCE_NA
+    then S := S + Sqr(A[i] - M)
+    else Inc(Skip);
+  Result := Sqrt(S / (Length(A)-Skip));
 end;
 
 
