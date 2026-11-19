@@ -27,7 +27,7 @@ type
     function Rst: TMessageBuilder;
     function Fmt(format: Integer = 1; mode: Integer = 0): TMessageBuilder;
     { FMT 5,0: ASCII measurement data with comma terminator, no source data. }
-    function FmtCommaTerminated: TMessageBuilder;
+    function FmtLFTerminated: TMessageBuilder;
     function UntQuery(mode: TUNTMode = untModuleInfoOnly): TMessageBuilder;
     function ErrQuery: TMessageBuilder;
 
@@ -123,9 +123,9 @@ begin
   Result := Self;
 end;
 
-function TMessageBuilder.FmtCommaTerminated: TMessageBuilder;
+function TMessageBuilder.FmtLFTerminated: TMessageBuilder;
 begin
-  AppendCmd('FMT 5,0');
+  AppendCmd('FMT 1,0');
   Result := Self;
 end;
 

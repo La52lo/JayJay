@@ -513,15 +513,15 @@ begin
                   AStep, FCompliance)
               .Message);
 
-      Write(MB.FmtCommaTerminated.Message);
+      Write(MB.FmtLFTerminated.Message); //lets try with /n
 
-      FTransport.SetReadTermination(',', True);
+      //FTransport.SetReadTermination(',', True);
 
       RawWrite(MB.XE.Message);
 
       for I := 0 to AStep-1 do
       begin
-        RawRecord := FTransport.ReadFMT5Record(I = AStep-1);
+        RawRecord := FTransport.ReadFMT1Record(I = AStep-1);
 
         Header := Copy(string(RawRecord), 1, 3);
         ValueText := Trim(Copy(string(RawRecord), 4, 12));
@@ -534,7 +534,7 @@ begin
             [I + 1, Header]);
         if Header[3] <> 'I' then
           raise EConvertError.CreateFmt(
-            'Expected current measurement in FMT 5 record at point %d, got "%s".',
+            'Expected current measurement in FMT 1 record at point %d, got "%s".',
             [I + 1, Header]);
         if not TryStrToFloat(ValueText, Current, Settings) then
           raise EConvertError.CreateFmt(
@@ -553,13 +553,6 @@ begin
         Inc(Result);
       end;
     finally
-      try
-        FTransport.SetReadTermination(#10, True);
-        TerminatorRestored := True;
-      finally
-        if TerminatorRestored then
-          Write('FMT 1,0');
-      end;
     end;
   finally
     MB.Free;

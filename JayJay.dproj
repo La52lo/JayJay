@@ -146,6 +146,7 @@
             <Form>ResultViewerForm</Form>
             <FormType>dfm</FormType>
         </DCCReference>
+        <DCCReference Include="src\ui\resultsummaryviewer.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

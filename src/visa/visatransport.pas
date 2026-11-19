@@ -101,7 +101,7 @@ type
     constructor Create(const resourceAddress: string;
                        timeoutMs: LongWord = 10000);
     destructor Destroy; override;
-
+    procedure Clear;
     procedure Write(const cmd: string);
     function Ask(const cmd: string): string;
 
@@ -114,7 +114,7 @@ type
       fixed-width B1500 streaming records when termchar termination is set. }
     function ReadExact(ACount: Integer): AnsiString;
     function ReadLineRaw(AMaxBytes: Integer): AnsiString;
-    function ReadFMT5Record(IsLastRecord: Boolean): AnsiString;
+    function ReadFMT1Record(IsLastRecord: Boolean): AnsiString;
     procedure SetTimeout(timeoutMs: LongWord);
     property Address: string read FAddr;
   end;
@@ -272,7 +272,6 @@ begin
       @Result[totalRead + 1],
       AMaxBytes - totalRead,
       bytesRead);
-
     CheckStatus(st, 'viRead (final FMT 5 record)');
 
     if bytesRead = 0 then
@@ -287,7 +286,7 @@ begin
   SetLength(Result, totalRead);
 end;
 
-function TVisaTransport.ReadFMT5Record(
+function TVisaTransport.ReadFMT1Record(
   IsLastRecord: Boolean): AnsiString;
 const
   FMT5_RECORD_BYTES = 16;
@@ -302,13 +301,14 @@ var
 begin
   if FInstr = VI_NULL then
     raise EVISAError.Create(
-      'Cannot read FMT 5 record: VISA session is not open.');
+      'Cannot read FMT 1 record: VISA session is not open.');
 
+    // Normal records: 15 data bytes + comma.
+  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, VI_FALSE);
+  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
   if not IsLastRecord then
   begin
-    // Normal records: 15 data bytes + comma.
-    SetReadTermination(',', True);
-
+    //SetReadTermination(',', True);
     Result := ReadExact(FMT5_RECORD_BYTES);
 
     if (Length(Result) <> FMT5_RECORD_BYTES) or
@@ -319,9 +319,10 @@ begin
 
     Exit;
   end;
-
   // Final record: 15 data bytes + LF or CRLF.
-  SetReadTermination(#10, True);
+  //  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR, 10);
+ //   CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR)');
+
 
   SetLength(Result, FMT5_FINAL_MAX_BYTES);
   totalRead := 0;
@@ -350,7 +351,7 @@ begin
   end;
 
   SetLength(Result, totalRead);
-
+  //Clear;
   // Remove LF.
   if (Length(Result) > 0) and
      (Result[Length(Result)] = #10) then
@@ -365,7 +366,8 @@ begin
     raise EConvertError.CreateFmt(
       'Invalid final FMT 5 record length: %d, expected %d. Data="%s"',
       [Length(Result), FMT5_DATA_BYTES, string(Result)]);
-
+  st := viSetAttribute(FInstr, VI_ATTR_TERMCHAR_EN, VI_TRUE);
+  CheckStatus(st, 'viSetAttribute(VI_ATTR_TERMCHAR_EN)');
   // Normalize final record to the same representation as normal records.
   Terminator := ',';
   Result := Result + AnsiString(Terminator);
@@ -398,6 +400,14 @@ begin
   CheckStatus(st, 'viRead (after "' + cmd + '")');
   SetString(Result, PAnsiChar(ReadBuffer), retCount);
   Result := TrimRight(Result);
+end;
+
+procedure TVisaTransport.Clear;
+var
+  st: ViStatus;
+begin
+  st := viClear(FInstr);
+  CheckStatus(st, 'viClear after sweep');
 end;
 
 end.

@@ -26,12 +26,13 @@ object MainWindowForm: TMainWindowForm
     ButtonHeight = 46
     ButtonWidth = 47
     Caption = 'TaskToolBar'
+    Color = clPurple
     EdgeBorders = [ebTop, ebBottom]
     Images = VirtualImageList1
+    ParentColor = False
     TabOrder = 1
     Transparent = True
     OnClick = TaskToolBarClick
-    ExplicitWidth = 925
     object ConnectButton: TToolButton
       Left = 0
       Top = 0
@@ -124,7 +125,8 @@ object MainWindowForm: TMainWindowForm
     BevelKind = bkSoft
     BorderStyle = bsNone
     BorderWidth = 1
-    Images = TreeNodeIcons
+    Color = clAquamarine
+    Images = ImageList1
     Indent = 10
     TabOrder = 2
     OnChanging = DeviceTreeViewChanging

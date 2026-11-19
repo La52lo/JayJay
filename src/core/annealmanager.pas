@@ -226,7 +226,7 @@ begin
   else
   begin
     StartV := AParams.StartVoltage;
-    StopV  := AParams.StartVoltage + (AParams.StepNumber) * AParams.StepSize ;
+    StopV  := AParams.StartVoltage + (AParams.StepNumber-1) * AParams.StepSize ;
     Steps  := AParams.StepNumber;
   end;
   Voltages := AParams.GetVoltages;
@@ -255,8 +255,8 @@ begin
         FObserver.MeasurementPoint(V, R);
       end);
     except on E: Exception do
-     FB1500.Ask('ERRX?');
-     //FObserver.Log(E.Message);
+     //FB1500.Ask('ERRX?');
+     FObserver.Log(E.Message);
     end;
   finally
     FB1500.AllChannelSaveAndZero;
